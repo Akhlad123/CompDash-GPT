@@ -1,0 +1,21 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[dev]
+  command = "npm run dev -- --port 5174"
+  targetPort = 5174
+  port = 8888
+  publish = "dist"
+  autoLaunch = false
+
+[functions]
+  directory = "netlify/functions"
+
+# SPA fallback for HashRouter — not strictly required since routes are hash-based,
+# but keeps direct navigation to index.html consistent.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

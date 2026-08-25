@@ -1,0 +1,34 @@
+.create-merge table telemetry_raw (
+  timestamp_utc:datetime,
+  site_id:string,
+  micro_serial:string,
+  dc_voltage_v:real,
+  dc_current_a:real,
+  dc_power_w:real,
+  ac_power_w:real,
+  energy_produced_kwh:real,
+  ambient_temperature_c:real,
+  grid_voltage_v:real,
+  operating_state:string,
+  product_type:string,
+  ghi_w_m2:real,
+  poa_irradiance_w_m2:real,
+  ingestion_id:string
+)
+
+.alter table telemetry_raw policy retention softdelete = 3650d recoverability = enabled
+.alter table telemetry_raw policy caching hot = 31d
+.alter table telemetry_raw policy partitioning '{"PartitionKeys":[{"ColumnName":"timestamp_utc","Kind":"UniformRange","Properties":{"Reference":"1970-01-01","RangeSize":"31.00:00:00","OverrideCreationTime":true}}]}'
+
+.create-or-alter materialized-view with (backfill=true, autoUpdateSchema=true) telemetry_daily on table telemetry_raw {
+  telemetry_raw
+  | summarize
+      energy_produced_kwh=sum(energy_produced_kwh),
+      avg_dc_voltage_v=avg(dc_voltage_v),
+      avg_dc_current_a=avg(dc_current_a),
+      avg_ac_power_w=avg(ac_power_w),
+      avg_ambient_temperature_c=avg(ambient_temperature_c),
+      avg_ghi_w_m2=avg(ghi_w_m2),
+      sample_count=count()
+    by day=bin(timestamp_utc, 1d), site_id, product_type
+}

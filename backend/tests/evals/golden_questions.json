@@ -1,0 +1,7 @@
+[
+  {"question": "Total units in Germany for 2026 - Q1", "expected_status": "completed", "expected_metric": "unit_count"},
+  {"question": "DC AC ratio in Germany", "expected_status": "clarification_required", "expected_metric": "dc_ac_ratio"},
+  {"question": "Explain warranty claims", "expected_status": "failed", "expected_metric": null},
+  {"question": "Average DC voltage from 2026-07-01 to 2026-07-02", "expected_status": "telemetry_plan_required", "expected_metric": "average_dc_voltage_v"},
+  {"question": "Find IQ8 manual compatibility guidance", "expected_status": "document_citations_required", "expected_metric": null}
+]

@@ -1,0 +1,11 @@
+using '../main.bicep'
+
+param environmentName = 'dev'
+param apiImage = 'replace-with-acr-image'
+param containerRegistryLoginServer = 'replace-with-acr.azurecr.io'
+param entraTenantId = 'replace-with-tenant-id'
+param entraApiClientId = 'replace-with-api-client-id'
+param entraIssuer = 'https://login.microsoftonline.com/replace/v2.0'
+param entraJwksUrl = 'https://login.microsoftonline.com/replace/discovery/v2.0/keys'
+param postgresAdministratorLogin = 'replace-with-admin-login'
+param postgresAdministratorPassword = 'replace-with-secure-deployment-parameter'

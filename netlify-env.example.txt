@@ -1,0 +1,5 @@
+# Copy relevant lines into a local .env file (gitignored) for `netlify dev` testing.
+# In production, set OPENAI_API_KEY as a Netlify environment variable
+# (Site settings > Environment variables) — NEVER commit the real key.
+
+OPENAI_API_KEY=sk-...

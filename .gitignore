@@ -1,0 +1,46 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Proprietary Fleet/RMA/Telemetry data — NEVER commit/push, local-only
+public/fleet-data/*.xlsx
+public/fleet-data/*.xls
+public/fleet-data/*.csv
+public/fleet-data/*.parquet
+dist/fleet-data/*
+public/sample/*.csv
+Fleet data analytics/irradiance/irradiance_lookup.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local Netlify folder
+.netlify

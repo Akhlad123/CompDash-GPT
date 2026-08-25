@@ -1,0 +1,57 @@
+{
+  "data_sources": [
+    {
+      "key": "fleet_postgres",
+      "name": "Fleet Metadata",
+      "engine": "postgresql",
+      "freshness_sla_minutes": 1440,
+      "datasets": [
+        {
+          "key": "fleet_snapshot",
+          "name": "Fleet Snapshot",
+          "description": "Versioned fleet configuration by site, product, module, geography, and reporting quarter.",
+          "grain": "site and reporting quarter",
+          "metrics": [
+            {"key": "unit_count", "display_name": "Unit Count", "description": "Number of microinverter units in the fleet snapshot.", "expression_template": "SUM(unit_count)", "unit": "units", "aggregation": "sum", "default_time_grain": "quarter", "synonyms": ["units", "microinverter count", "inverter count"], "validation_rules": {"non_negative": true}},
+            {"key": "dc_ac_ratio", "display_name": "DC/AC Ratio", "description": "Module DC nameplate capacity divided by inverter AC nameplate capacity for the effective fleet snapshot.", "expression_template": "stc_mwdc / NULLIF(mwac, 0)", "unit": "ratio", "aggregation": "average", "default_time_grain": "quarter", "synonyms": ["dc ac ratio", "dc/ac", "oversizing ratio"], "validation_rules": {"minimum": 0, "requires_effective_date": true}},
+            {"key": "irradiation_monthly_kwh_m2", "display_name": "Irradiation", "description": "Precomputed monthly solar irradiation for the site location.", "expression_template": "AVG(irr_ann_kwh_m2_month)", "unit": "kWh/m²/month", "aggregation": "average", "default_time_grain": "month", "synonyms": ["irradiance", "irradiation", "ghi", "solar exposure"], "validation_rules": {"minimum": 0}},
+            {"key": "stc_rating_w", "display_name": "STC Rating", "description": "PV module standard test condition nameplate power.", "expression_template": "AVG(stc_rating2)", "unit": "W", "aggregation": "average", "default_time_grain": "quarter", "synonyms": ["module power", "module wattage", "stc rating"], "validation_rules": {"minimum": 0}}
+          ],
+          "dimensions": [
+            {"key": "site_id", "display_name": "Site", "data_type": "string", "allowed_values_source": "fleet_snapshot.site_id", "synonyms": ["site", "site id"]},
+            {"key": "country", "display_name": "Country", "data_type": "string", "allowed_values_source": "fleet_snapshot.country", "synonyms": ["country"]},
+            {"key": "region_bundle", "display_name": "Region", "data_type": "string", "allowed_values_source": "fleet_snapshot.region_bundle", "synonyms": ["region", "geography"]},
+            {"key": "product_type", "display_name": "Microinverter Product", "data_type": "string", "allowed_values_source": "fleet_snapshot.product_type", "synonyms": ["microinverter", "inverter model", "product"]},
+            {"key": "quarter_first_interval", "display_name": "Reporting Quarter", "data_type": "period", "allowed_values_source": "fleet_snapshot.quarter_first_interval", "synonyms": ["quarter", "period", "reporting period"]}
+          ]
+        }
+      ]
+    },
+    {
+      "key": "telemetry_adx",
+      "name": "Telemetry Rollups",
+      "engine": "azure_data_explorer",
+      "freshness_sla_minutes": 60,
+      "datasets": [
+        {
+          "key": "telemetry_daily",
+          "name": "Telemetry Daily Rollup",
+          "description": "Daily production, electrical, availability, and weather telemetry summarized by site and microinverter product.",
+          "grain": "site, product, and UTC day",
+          "metrics": [
+            {"key": "production_energy_kwh", "display_name": "Production Energy", "description": "AC energy produced, with counter resets handled by the telemetry transformation.", "expression_template": "SUM(energy_produced_kwh)", "unit": "kWh", "aggregation": "sum", "default_time_grain": "day", "synonyms": ["production", "energy produced", "energy"], "validation_rules": {"minimum": 0, "requires_time_range": true}},
+            {"key": "average_dc_voltage_v", "display_name": "Average DC Voltage", "description": "Mean DC voltage across valid telemetry intervals.", "expression_template": "AVG(dc_voltage_v)", "unit": "V", "aggregation": "average", "default_time_grain": "day", "synonyms": ["dc voltage", "average voltage"], "validation_rules": {"minimum": 0, "requires_time_range": true}},
+            {"key": "clipping_duration_minutes", "display_name": "Clipping Duration", "description": "Sum of validated operating intervals meeting the approved clipping rule for the inverter specification.", "expression_template": "SUM(clipping_duration_minutes)", "unit": "minutes", "aggregation": "sum", "default_time_grain": "day", "synonyms": ["clipping", "clipping duration", "time clipping"], "validation_rules": {"minimum": 0, "requires_time_range": true, "requires_specification_version": true}},
+            {"key": "availability_pct", "display_name": "Availability", "description": "Valid operating intervals divided by expected intervals, excluding configured planned maintenance.", "expression_template": "AVG(availability_pct)", "unit": "%", "aggregation": "average", "default_time_grain": "day", "synonyms": ["availability", "uptime", "online percentage"], "validation_rules": {"minimum": 0, "maximum": 100, "requires_time_range": true}}
+          ],
+          "dimensions": [
+            {"key": "timestamp_utc", "display_name": "Timestamp", "data_type": "datetime", "allowed_values_source": "telemetry_daily.timestamp_utc", "synonyms": ["date", "time", "timestamp"]},
+            {"key": "site_id_telemetry", "display_name": "Site", "data_type": "string", "allowed_values_source": "telemetry_daily.site_id", "synonyms": ["site", "site id"]},
+            {"key": "micro_serial", "display_name": "Microinverter Serial Number", "data_type": "string", "allowed_values_source": "telemetry_daily.micro_serial", "synonyms": ["serial", "micro serial", "inverter serial"]},
+            {"key": "product_type_telemetry", "display_name": "Microinverter Product", "data_type": "string", "allowed_values_source": "telemetry_daily.product_type", "synonyms": ["iq model", "microinverter", "product"]}
+          ]
+        }
+      ]
+    }
+  ]
+}
