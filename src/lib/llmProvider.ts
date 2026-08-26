@@ -113,7 +113,7 @@ class OllamaProvider implements LLMProvider {
     try {
       response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
         body: JSON.stringify(body),
         signal: controller.signal,
       })
@@ -194,7 +194,7 @@ class OllamaProvider implements LLMProvider {
     try {
       response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
         body: JSON.stringify(body),
         signal: controller.signal,
       })
