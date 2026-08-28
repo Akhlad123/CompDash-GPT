@@ -28,7 +28,7 @@ import { detectIntent } from '@/lib/intentRouter'
 import type { ConversationTurnContext } from '@/lib/intentRouter'
 import { dispatchTool, ToolNotFoundError, ToolParamError } from '@/lib/toolDispatcher'
 import { explainResultStream, buildFallbackSummary } from '@/lib/explainer'
-import { getOllamaProvider, currentProviderModel, warmupProvider } from '@/lib/llmProvider'
+import { getOllamaProvider, currentProviderModel, currentProviderLabel, warmupProvider } from '@/lib/llmProvider'
 import type { AnalysisRequest } from '@/lib/intentRouter'
 import { validateFleetSql, fixSqlGroupBy } from '@/lib/sqlSafety'
 import { routeQuestion, type QueryTarget } from '@/lib/nlQueryRouter'
@@ -41,6 +41,35 @@ import { ArtifactRenderer } from '@/features/ask-question/components/ArtifactRen
 import { EvidencePanel } from '@/features/ask-question/components/EvidencePanel'
 
 const USE_NEW_ENGINE = true
+
+/** Lightweight markdown → HTML for LLM insight text. Handles bold, italic, headers, bullets, code, and line breaks. */
+function renderMarkdown(md: string): string {
+  return md
+    // Escape HTML entities
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    // Headers: ### H3, ## H2, # H1
+    .replace(/^### (.+)$/gm, '<h4 class="font-semibold text-sm mt-3 mb-1">$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3 class="font-semibold text-base mt-3 mb-1">$1</h3>')
+    .replace(/^# (.+)$/gm, '<h3 class="font-bold text-base mt-3 mb-1">$1</h3>')
+    // Bold + italic: ***text***
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    // Bold: **text**
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    // Italic: *text*
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // Inline code: `code`
+    .replace(/`([^`]+)`/g, '<code class="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs">$1</code>')
+    // Bullet lists: - item or * item
+    .replace(/^[\-\*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+    // Numbered lists: 1. item
+    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal">$1</li>')
+    // Wrap consecutive <li> in <ul>
+    .replace(/((?:<li[^>]*>.*<\/li>\n?)+)/g, '<ul class="my-1 space-y-0.5">$1</ul>')
+    // Paragraphs: double newlines
+    .replace(/\n\n/g, '</p><p class="mt-2">')
+    // Single newlines (within a paragraph)
+    .replace(/\n/g, '<br/>')
+}
 
 const COLUMN_LABELS: Record<string, string> = {
   irr_ann_kwh_m2_month: 'Irradiance (kWh/m\u00b2/day)',
@@ -354,6 +383,42 @@ export default function QueryPage() {
         })
         setInsight('')
         setAnalysisRequest(request)
+
+        // ── Knowledge question: stream a direct LLM answer ──
+        if (request.intent === 'knowledge') {
+          setInsightLoading(true)
+          setResult({ sql: '', confidence: 'high', explanation: 'Direct LLM answer (knowledge question)', matchedEntities: {} })
+          const provider = getOllamaProvider()
+          const solarSystemPrompt = `You are a solar energy expert assistant in a microinverter fleet dashboard (CompDash GPT).
+
+FORMATTING RULES:
+- Start with a clear, direct answer in 1-2 sentences.
+- Use bullet points (- ) for lists. Do NOT use nested bullets.
+- Use **bold** only for key terms being defined, not for every phrase.
+- Use ## for section headers only if the answer has 2+ distinct sections.
+- Keep answers concise: 150-250 words maximum.
+- Do NOT overuse bold or formatting — keep it clean and readable.
+- If referencing numbers (irradiance, specs), note they are approximate/typical.
+
+DOMAIN: solar energy, photovoltaics, Enphase microinverters (IQ7, IQ8, IQ9 series), clipping, irradiance, DC/AC ratio, module types.
+For solar terms: explain what it is, why it matters, and its impact on system performance.`
+          try {
+            await provider.stream(q, solarSystemPrompt, (token) => {
+              setInsight((prev) => prev + token)
+            }, { temperature: 0.4, maxTokens: 600, timeoutMs: 30_000 })
+          } catch {
+            setInsight('Sorry, I could not generate an answer right now. Please try again.')
+          } finally {
+            setInsightLoading(false)
+          }
+          setHistory((h) => [{
+            question: q,
+            answer: 'knowledge',
+            resultSummary: 'Direct LLM answer',
+            timestamp: Date.now(),
+          }, ...h].slice(0, 20))
+          return
+        }
 
         if (request.unanswerable) {
           setInsight(request.caveat ?? 'This question cannot be answered from available data.')
@@ -699,7 +764,7 @@ export default function QueryPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Ask a Question</h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Powered by Ollama · model: <span className="font-mono font-medium">{currentProviderModel()}</span>
+            Powered by {currentProviderLabel()} · model: <span className="font-mono font-medium">{currentProviderModel()}</span>
             {' · '}
             <OllamaSettingsDialog />
           </p>
@@ -1087,12 +1152,12 @@ export default function QueryPage() {
             <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-purple-500" />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold uppercase tracking-wider text-purple-600 dark:text-purple-400">AI Insight</p>
-              <p className="mt-1 text-sm">
-                {insight}
+              <div className="mt-1 text-sm leading-relaxed">
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(insight) }} />
                 {insightLoading && (
                   <span className="inline-block ml-0.5 h-3.5 w-0.5 animate-pulse bg-purple-500 align-text-bottom" />
                 )}
-              </p>
+              </div>
             </div>
           </CardContent>
         </Card>

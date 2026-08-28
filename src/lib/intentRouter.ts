@@ -18,6 +18,7 @@ export const AnalysisRequestSchema = z.object({
     'site_analysis', 'microinverter_analysis',
     'nearby_sites',
     'fleet_search',
+    'knowledge',
     'unanswerable',
   ]),
   tool: z.string(),
@@ -82,8 +83,9 @@ RULES:
 7. If the question asks to "analyze", "deep dive", "investigate", or "tell me everything about" a specific site → use analyze_site. This runs a comprehensive multi-step workflow: fleet metadata, telemetry check, energy production, anomaly detection, and clipping analysis.
 7b. If the question asks to analyze a specific microinverter serial number, "inverter 123456789012", "analyze microinverter 123456789012", or mentions a 12-digit serial → use analyze_microinverter. Put the serial number in the serials field.
 8a. If the question asks for "nearby sites", "similar sites", "comparable sites", "peer sites", or "find sites near" a specific site ID → use find_nearby_sites. Optionally capture a microinverter model (IQ9N, IQ8HC etc.) in the products field.
-8b. If the question cannot be answered from fleet or telemetry data (e.g. revenue, pricing, weather forecast) → set intent to "unanswerable" and unanswerable to true.
-8c. If the question asks to find/list/show/give sites matching specific criteria such as microinverter model (IQ8HC, IQ9N, etc.), module power (420W, 450-500W), country (France, Germany, USA), state, irradiance level (very_high >5.5, high >4.5, medium 3.5–4.5, low <3.5 kWh/m²/day), or module type/wafer (monocrystalline, polycrystalline, G12R, G12, M10, M10R, M6, M12) → use fleet_search. Put filters in the filters object: { microinverter, minPowerW, maxPowerW, country, state, irradiance (very_high/high/medium/low), moduleWafer, moduleMake }. Put topN count in the limit field.
+8b. If the question is a GENERIC or EDUCATIONAL question that does NOT require querying fleet or telemetry data — such as "what is clipping?", "what is current clipping?", "explain DC/AC ratio", "what is the typical irradiance of France?", "how do microinverters work?", "what causes shading losses?", "tell me about IQ8HC specifications" — set intent to "knowledge", tool to "knowledge_answer", and unanswerable to false. The key distinction: if the user is asking about a CONCEPT, DEFINITION, or GENERAL FACT (even if it uses solar terms like clipping, irradiance, voltage), it is knowledge. If they reference a SPECIFIC SITE, SERIAL NUMBER, REGION CODE, or ask to QUERY/COMPARE/ANALYZE actual dashboard data, it is a data question.
+8c. If the question cannot be answered from fleet or telemetry data AND is not a knowledge question (e.g. revenue, pricing, stock price) → set intent to "unanswerable" and unanswerable to true.
+8d. If the question asks to find/list/show/give sites matching specific criteria such as microinverter model (IQ8HC, IQ9N, etc.), module power (420W, 450-500W), country (France, Germany, USA), state, irradiance level (very_high >5.5, high >4.5, medium 3.5–4.5, low <3.5 kWh/m²/day), or module type/wafer (monocrystalline, polycrystalline, G12R, G12, M10, M10R, M6, M12) → use fleet_search. Put filters in the filters object: { microinverter, minPowerW, maxPowerW, country, state, irradiance (very_high/high/medium/low), moduleWafer, moduleMake }. Put topN count in the limit field.
 9. Set confidence to "high" when the intent is clear, "medium" when there are two reasonable interpretations, "low" when the question is ambiguous.
 10. For product names: IQ9N, IQ8HC, IQ8P, IQ8H, IQ8M, IQ7A etc. are microinverter SKU families.
 11. For regions: NA=North America, EURO=Europe, BR=Brazil, ANZP=Australia/NZ, LATAM=Latin America, IN=India, EMKT=Emerging Market.
@@ -190,6 +192,33 @@ A: {"intent":"fleet_search","tool":"fleet_search","filters":{"moduleWafer":"M10"
 Q: "Find 25 sites with IQ8P and G12 wafer 450-500W in Australia"
 A: {"intent":"fleet_search","tool":"fleet_search","filters":{"microinverter":"IQ8P","moduleWafer":"G12","minPowerW":450,"maxPowerW":500,"country":"Australia"},"limit":25,"confidence":"high"}
 
+Q: "What is clipping?"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "What is current clipping?"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "What is the irradiance of France?"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "How do microinverters work?"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "Explain DC/AC ratio"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "What causes shading losses in solar panels?"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "What is the difference between string inverters and microinverters?"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "What is MPPT?"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "What are the specs of IQ8HC?"
+A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
 Q: "What will the revenue be next quarter?"
 A: {"intent":"unanswerable","tool":"","unanswerable":true,"confidence":"high","caveat":"Revenue and financial forecasts are not available in fleet or telemetry data."}
 `
@@ -216,6 +245,60 @@ export class IntentParseError extends Error {
     super(message)
     this.name = 'IntentParseError'
     this.rawResponse = rawResponse
+  }
+}
+
+// Metric aliases Gemini (and other LLMs) commonly return instead of the exact column names
+const METRIC_ALIAS_MAP: Record<string, string> = {
+  site_count: 'unit_count',
+  sites: 'unit_count',
+  count: 'unit_count',
+  num_sites: 'unit_count',
+  total_sites: 'unit_count',
+  units: 'unit_count',
+  total_units: 'unit_count',
+  power: 'stc_mwdc',
+  capacity: 'stc_mwdc',
+  irradiance: 'irr_ann_kwh_m2_month',
+  rating: 'stc_rating2',
+  stc_rating: 'stc_rating2',
+}
+
+/** Fix common LLM mistakes in the parsed JSON before Zod validation. */
+function normalizeAnalysisRequest(parsed: Record<string, unknown>): void {
+  // Fix invalid metric values
+  if (typeof parsed['metric'] === 'string') {
+    const alias = METRIC_ALIAS_MAP[parsed['metric']]
+    if (alias) parsed['metric'] = alias
+  }
+
+  // Ensure unanswerable defaults to false if not present
+  if (parsed['unanswerable'] === undefined) {
+    parsed['unanswerable'] = false
+  }
+
+  // If tool is missing but intent is present, try to infer tool name
+  if (!parsed['tool'] && typeof parsed['intent'] === 'string') {
+    const INTENT_TOOL_MAP: Record<string, string> = {
+      fleet_summary: 'get_fleet_summary',
+      site_summary: 'get_fleet_summary',
+      product_summary: 'get_fleet_summary',
+      region_summary: 'get_region_summary',
+      clipping: 'calculate_clipping',
+      inverter_utilization: 'calculate_inverter_utilization',
+      anomaly_detect: 'detect_anomalies',
+      site_analysis: 'analyze_site',
+      microinverter_analysis: 'analyze_microinverter',
+      nearby_sites: 'find_nearby_sites',
+      fleet_search: 'fleet_search',
+      energy_total: 'calculate_energy',
+      energy_compare: 'compare_energy',
+      dc_ac_ratio: 'get_dc_ac_ratio',
+      time_series: 'get_time_series',
+      knowledge: 'knowledge_answer',
+    }
+    const tool = INTENT_TOOL_MAP[parsed['intent'] as string]
+    if (tool) parsed['tool'] = tool
   }
 }
 
@@ -448,9 +531,10 @@ export async function detectIntent(
     })
 
     const jsonStr = extractJson(result.text)
-    let parsed: unknown
+    console.debug('[intentRouter] LLM raw text:', result.text.slice(0, 400))
+    let parsed: Record<string, unknown>
     try {
-      parsed = JSON.parse(jsonStr)
+      parsed = JSON.parse(jsonStr) as Record<string, unknown>
     } catch {
       throw new IntentParseError(
         `LLM response was not valid JSON: ${jsonStr.slice(0, 200)}`,
@@ -458,8 +542,12 @@ export async function detectIntent(
       )
     }
 
+    // Normalize common LLM mistakes before validation
+    normalizeAnalysisRequest(parsed)
+
     const validated = AnalysisRequestSchema.safeParse(parsed)
     if (!validated.success) {
+      console.debug('[intentRouter] Zod validation failed:', validated.error.message, 'parsed:', JSON.stringify(parsed).slice(0, 300))
       throw new IntentParseError(
         `AnalysisRequest schema validation failed: ${validated.error.message}`,
         result.text
@@ -487,7 +575,7 @@ export async function detectIntent(
         tool: '',
         unanswerable: true,
         confidence: 'low',
-        caveat: `Ollama is not responding. Please check that it is running and try again.`,
+        caveat: `LLM provider is not responding. Please check your settings and try again.`,
       }
     }
 

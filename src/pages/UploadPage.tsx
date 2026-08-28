@@ -9,6 +9,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  ExternalLink,
+  FolderDown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -37,6 +39,8 @@ import { ingestData } from '@/lib/duckdb'
 import { saveSession } from '@/lib/sessionStore'
 import { useDataStore } from '@/store/dataStore'
 import type { InverterInfo } from '@/store/dataStore'
+
+const SHAREPOINT_TELEMETRY = 'https://enphase-my.sharepoint.com/:f:/r/personal/makhlad_enphaseenergy_com/Documents/CompDash%20files/Telemetry%20data?d=w8188fce7d40a4f1fba5172fad7d8a796&csf=1&web=1&e=Exb1Vn'
 
 interface UploadedFile {
   file: File
@@ -293,16 +297,43 @@ export default function UploadPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Step 1: Open SharePoint */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">1</span>
+                <span className="text-sm font-medium">Get telemetry files from SharePoint (optional)</span>
+              </div>
+              <a
+                href={SHAREPOINT_TELEMETRY}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 hover:shadow-sm dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
+              >
+                <FolderDown className="h-5 w-5 shrink-0" />
+                <div className="flex-1">
+                  <span>Open Telemetry Data folder in SharePoint</span>
+                  <p className="mt-0.5 text-xs font-normal opacity-75">Download the files, then drop them below</p>
+                </div>
+                <ExternalLink className="h-4 w-4 shrink-0 opacity-60" />
+              </a>
+            </div>
+
+            {/* Step 2: Drop files */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">2</span>
+                <span className="text-sm font-medium">Drag the files here or select from your computer</span>
+              </div>
             <div
               {...getRootProps()}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-colors ${
+              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-all ${
                 isDragActive
-                  ? 'border-primary bg-primary/5'
-                  : 'border-muted-foreground/25 hover:border-primary/50'
+                  ? 'border-primary bg-primary/10 shadow-inner'
+                  : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
               }`}
             >
               <input {...getInputProps()} />
-              <FileSpreadsheet className="mb-3 h-10 w-10 text-muted-foreground" />
+              <FileSpreadsheet className={`mb-3 h-10 w-10 ${isDragActive ? 'text-primary' : 'text-muted-foreground'}`} />
               {isDragActive ? (
                 <p className="text-sm font-medium">Drop files here…</p>
               ) : (
@@ -365,6 +396,7 @@ export default function UploadPage() {
                 Next: Map Columns
                 <ArrowRight className="ml-1 h-4 w-4" />
               </Button>
+            </div>
             </div>
           </CardContent>
         </Card>

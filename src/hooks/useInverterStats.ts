@@ -69,9 +69,13 @@ function computeZScores(rows: InverterStatsRow[]): InverterStatsWithZ[] {
   })
 }
 
-export function useInverterStats(siteId: string) {
+export function useInverterStats(siteId: string | string[]) {
   const isDataLoaded = useDataStore((s) => s.isDataLoaded)
   const dateRange = useDataStore((s) => s.dateRange)
+
+  const hasSelection = Array.isArray(siteId)
+    ? siteId.length > 0
+    : siteId.length > 0
 
   return useQuery<InverterStatsWithZ[]>({
     queryKey: ['inverterStats', siteId, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
@@ -82,6 +86,6 @@ export function useInverterStats(siteId: string) {
       console.log('[useInverterStats] results:', rows.length, 'rows, sample:', rows[0] ? JSON.stringify({ sn: rows[0].serial_number, total_energy: rows[0].total_energy, row_count: rows[0].row_count }) : 'none')
       return computeZScores(rows)
     },
-    enabled: isDataLoaded && siteId.length > 0,
+    enabled: isDataLoaded && hasSelection,
   })
 }

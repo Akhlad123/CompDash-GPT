@@ -24,10 +24,8 @@ dist-ssr
 *.sw?
 
 # Proprietary Fleet/RMA/Telemetry data — NEVER commit/push, local-only
-public/fleet-data/*.xlsx
-public/fleet-data/*.xls
-public/fleet-data/*.csv
-public/fleet-data/*.parquet
+*.parquet
+public/fleet-data/*
 dist/fleet-data/*
 public/sample/*.csv
 Fleet data analytics/irradiance/irradiance_lookup.csv
@@ -44,3 +42,6 @@ __pycache__/
 
 # Local Netlify folder
 .netlify
+
+# Cloudflare / Wrangler
+.wrangler

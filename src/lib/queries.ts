@@ -218,10 +218,15 @@ export function buildTimeseriesQuery(
     .replace('{date_filter}', buildDateFilter(dateRange))
 }
 
-export function buildInverterSummaryQuery(siteId: string, dateRange: { from: Date; to: Date } | null = null): string {
-  const siteFilter = siteId && siteId !== '__all__'
-    ? `AND site_id = '${siteId}'`
-    : ''
+export function buildInverterSummaryQuery(siteId: string | string[], dateRange: { from: Date; to: Date } | null = null): string {
+  let siteFilter = ''
+  if (Array.isArray(siteId)) {
+    if (siteId.length > 0) {
+      siteFilter = `AND site_id IN (${siteId.map((s) => `'${s}'`).join(', ')})`
+    }
+  } else if (siteId && siteId !== '__all__') {
+    siteFilter = `AND site_id = '${siteId}'`
+  }
   return QUERY_INVERTER_SUMMARY
     .replace('{site_filter}', siteFilter)
     .replace('{date_filter}', buildDateFilter(dateRange))

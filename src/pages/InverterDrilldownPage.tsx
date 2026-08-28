@@ -33,6 +33,7 @@ import InverterSelector from '@/components/filters/InverterSelector'
 import LineChart from '@/components/charts/LineChart'
 import ExportToolbar from '@/components/export/ExportToolbar'
 import SiteContextPanel from '@/components/fleet/SiteContextPanel'
+import SiteSelector from '@/components/filters/SiteSelector'
 import { useDataStore } from '@/store/dataStore'
 import { useUIStore } from '@/store/uiStore'
 import { useInverterStats } from '@/hooks/useInverterStats'
@@ -73,6 +74,7 @@ type SortKey = keyof Pick<
 
 interface ThresholdResultRow {
   serial_number: string
+  site_id: string
   sku_name: string | null
   total_energy_kwh: number
   energy_above_kwh: number
@@ -123,7 +125,7 @@ export default function InverterDrilldownPage() {
 
   const dateRange = useDataStore((s) => s.dateRange)
 
-  const [siteId, setSiteId] = useState('')
+  const [selectedDrilldownSites, setSelectedDrilldownSites] = useState<string[]>([])
   const [searchTerm, setSearchTerm] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('total_energy')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -148,13 +150,19 @@ export default function InverterDrilldownPage() {
     if (allSites.length === 0) return
     const urlSite = searchParams.get('site')
     if (urlSite && allSites.includes(urlSite)) {
-      setSiteId(urlSite)
-    } else if (!siteId) {
-      setSiteId(allSites[0])
+      setSelectedDrilldownSites([urlSite])
+    } else if (selectedDrilldownSites.length === 0) {
+      setSelectedDrilldownSites([allSites[0]])
     }
-  }, [allSites, searchParams, siteId])
+  }, [allSites, searchParams, selectedDrilldownSites.length])
 
-  const { data: stats, isLoading } = useInverterStats(siteId)
+  // Derived siteId for backward compat with detail panel / cross-site compare
+  const siteId = selectedDrilldownSites.length === 1 ? selectedDrilldownSites[0] : ''
+  const multiSite = selectedDrilldownSites.length > 1
+
+  const { data: stats, isLoading } = useInverterStats(
+    selectedDrilldownSites.length === 1 ? selectedDrilldownSites[0] : selectedDrilldownSites
+  )
 
   // Threshold analysis helpers
   const addCondition = useCallback(() => {
@@ -182,10 +190,12 @@ export default function InverterDrilldownPage() {
   }, [thresholdConditions])
 
   const { data: thresholdData } = useQuery<ThresholdResultRow[]>({
-    queryKey: ['threshold', siteId, thresholdConditions, thresholdLogic, thresholdDirection, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
+    queryKey: ['threshold', selectedDrilldownSites, thresholdConditions, thresholdLogic, thresholdDirection, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
     queryFn: async () => {
       const df = buildDateFilter(dateRange)
-      const sf = siteId && siteId !== '__all__' ? `site_id = '${siteId}'` : '1=1'
+      const sf = selectedDrilldownSites.length > 0
+        ? `site_id IN (${selectedDrilldownSites.map((s) => `'${s}'`).join(', ')})`
+        : '1=1'
 
       if (thresholdDirection === 'above') {
         // ABOVE: For rows where param > threshold, compute marginal energy:
@@ -210,6 +220,7 @@ export default function InverterDrilldownPage() {
         const sql = `
           SELECT
             serial_number,
+            site_id,
             sku_name,
             SUM(energy_produced) / 1000.0 AS total_energy_kwh,
             GREATEST(${energyAboveExpr}, 0) AS energy_above_kwh,
@@ -222,7 +233,7 @@ export default function InverterDrilldownPage() {
             COUNT(*) AS total_data_points
           FROM telemetry
           WHERE ${sf} ${df}
-          GROUP BY serial_number, sku_name
+          GROUP BY serial_number, site_id, sku_name
           ORDER BY energy_above_kwh DESC
         `
         return duckQuery<ThresholdResultRow>(sql)
@@ -248,6 +259,7 @@ export default function InverterDrilldownPage() {
           WITH daily AS (
             SELECT
               serial_number,
+              site_id,
               sku_name,
               CAST(timestamp AS DATE) AS day,
               SUM(energy_produced) / 1000.0 AS day_energy_kwh,
@@ -255,20 +267,22 @@ export default function InverterDrilldownPage() {
               ${maxExprs}
             FROM telemetry
             WHERE ${sf} ${df}
-            GROUP BY serial_number, sku_name, CAST(timestamp AS DATE)
+            GROUP BY serial_number, site_id, sku_name, CAST(timestamp AS DATE)
           ),
           totals AS (
             SELECT
               serial_number,
+              site_id,
               sku_name,
               SUM(energy_produced) / 1000.0 AS total_energy_kwh,
               COUNT(*) AS total_data_points
             FROM telemetry
             WHERE ${sf} ${df}
-            GROUP BY serial_number, sku_name
+            GROUP BY serial_number, site_id, sku_name
           )
           SELECT
             t.serial_number,
+            t.site_id,
             t.sku_name,
             t.total_energy_kwh,
             t.total_energy_kwh - COALESCE(SUM(d.day_energy_kwh), 0) AS energy_above_kwh,
@@ -280,14 +294,14 @@ export default function InverterDrilldownPage() {
             COALESCE(SUM(d.day_points), 0) AS data_points_below,
             t.total_data_points
           FROM totals t
-          LEFT JOIN daily d ON t.serial_number = d.serial_number AND t.sku_name IS NOT DISTINCT FROM d.sku_name AND (${belowWhere})
-          GROUP BY t.serial_number, t.sku_name, t.total_energy_kwh, t.total_data_points
+          LEFT JOIN daily d ON t.serial_number = d.serial_number AND t.site_id = d.site_id AND t.sku_name IS NOT DISTINCT FROM d.sku_name AND (${belowWhere})
+          GROUP BY t.serial_number, t.site_id, t.sku_name, t.total_energy_kwh, t.total_data_points
           ORDER BY energy_below_kwh DESC
         `
         return duckQuery<ThresholdResultRow>(sql)
       }
     },
-    enabled: isDataLoaded && siteId.length > 0 && thresholdValid,
+    enabled: isDataLoaded && selectedDrilldownSites.length > 0 && thresholdValid,
   })
 
   // Filter + sort
@@ -502,30 +516,15 @@ export default function InverterDrilldownPage() {
       {/* Filter bar */}
       <Card>
         <CardContent className="flex flex-wrap items-center gap-4 pt-6">
-          <Select
-            value={siteId}
-            onValueChange={(v) => {
-              if (v) {
-                setSiteId(v)
-                setSelectedSerial(null)
-                setCompareSerials([])
-              }
+          <SiteSelector
+            allSites={allSites}
+            selectedSites={selectedDrilldownSites}
+            onChange={(sites) => {
+              setSelectedDrilldownSites(sites)
+              setSelectedSerial(null)
+              setCompareSerials([])
             }}
-          >
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Select site" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">
-                All Sites ({allSites.length})
-              </SelectItem>
-              {allSites.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          />
 
           <DateRangePicker />
 
@@ -539,6 +538,12 @@ export default function InverterDrilldownPage() {
               className="h-8 rounded-md border border-input bg-transparent pl-8 pr-3 text-sm"
             />
           </div>
+
+          {multiSite && (
+            <Badge variant="outline" className="text-xs">
+              {selectedDrilldownSites.length} sites selected — comparing across sites
+            </Badge>
+          )}
         </CardContent>
       </Card>
 
@@ -546,7 +551,7 @@ export default function InverterDrilldownPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            Inverter Summary — {siteId === '__all__' ? 'All Sites' : siteId}
+            Inverter Summary — {multiSite ? `${selectedDrilldownSites.length} Sites` : siteId || 'No site selected'}
             {filtered.length > 0 && (
               <span className="ml-2 text-sm font-normal text-muted-foreground">
                 ({filtered.length} inverters)
@@ -566,6 +571,7 @@ export default function InverterDrilldownPage() {
                   <TableHeader>
                     <TableRow>
                       <SortHeader label="Serial Number" field="serial_number" />
+                      {multiSite && <TableHead>Site ID</TableHead>}
                       <TableHead>SKU</TableHead>
                       <SortHeader label="Energy (kWh)" field="total_energy" />
                       <SortHeader label="DC Power (W)" field="avg_dc_power" />
@@ -591,6 +597,9 @@ export default function InverterDrilldownPage() {
                         <TableCell className="font-mono text-xs">
                           {inv.serial_number}
                         </TableCell>
+                        {multiSite && (
+                          <TableCell className="text-xs font-medium">{inv.site_id}</TableCell>
+                        )}
                         <TableCell className="text-xs">
                           {inv.sku_name ?? '—'}
                         </TableCell>
@@ -847,6 +856,7 @@ export default function InverterDrilldownPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Inverter Serial Number</TableHead>
+                    {multiSite && <TableHead>Site ID</TableHead>}
                     <TableHead>SKU / Product Name</TableHead>
                     <TableHead>Data Points {thresholdDirection === 'above' ? 'Above' : 'Below'} / Total</TableHead>
                     <TableHead>Total Energy (kWh)</TableHead>
@@ -866,8 +876,9 @@ export default function InverterDrilldownPage() {
                       ? safe(row.data_points_above)
                       : safe(row.data_points_below)
                     return (
-                      <TableRow key={row.serial_number}>
+                      <TableRow key={`${row.serial_number}-${row.site_id}`}>
                         <TableCell className="font-mono text-xs">{row.serial_number}</TableCell>
+                        {multiSite && <TableCell className="text-xs font-medium">{row.site_id}</TableCell>}
                         <TableCell className="text-xs">{row.sku_name ?? '—'}</TableCell>
                         <TableCell>{displayDataPoints.toLocaleString()} / {safe(row.total_data_points).toLocaleString()}</TableCell>
                         <TableCell>{safe(row.total_energy_kwh).toLocaleString(undefined, { maximumFractionDigits: 2 })}</TableCell>

@@ -2,12 +2,17 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, ArrowRight, Database, RotateCcw } from 'lucide-react'
+import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, ArrowRight, Database, RotateCcw, ExternalLink, FolderDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { loadFleetFromFile, type FleetLoadResult } from '@/lib/fleetDuckdb'
 import { loadRmaFromFile, type RmaLoadResult } from '@/lib/rmaDuckdb'
+
+const SHAREPOINT_LINKS = {
+  fleet: 'https://enphase-my.sharepoint.com/:f:/r/personal/makhlad_enphaseenergy_com/Documents/CompDash%20files/Fleet%20data?d=wed6e0b89ad744ad8b0bbe4ce0c16ac25&csf=1&web=1&e=gmx5hT',
+  rma: 'https://enphase-my.sharepoint.com/:f:/r/personal/makhlad_enphaseenergy_com/Documents/CompDash%20files/RMA%20data?d=wc1f358fb447640cc935fa3d8f34f4f05&csf=1&web=1&e=fq4Db5',
+}
 
 interface UploadCardProps {
   title: string
@@ -19,13 +24,15 @@ interface UploadCardProps {
   onDrop: (file: File) => void
   onReset: () => void
   icon: React.ReactNode
+  sharepointUrl: string
+  sharepointLabel: string
 }
 
 function formatCount(n: number): string {
   return n.toLocaleString()
 }
 
-function UploadCard({ title, description, accept, file, result, loading, onDrop, onReset, icon }: UploadCardProps) {
+function UploadCard({ title, description, accept, file, result, loading, onDrop, onReset, icon, sharepointUrl, sharepointLabel }: UploadCardProps) {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { [accept]: ['.parquet'] },
     multiple: false,
@@ -44,22 +51,46 @@ function UploadCard({ title, description, accept, file, result, loading, onDrop,
         </CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-1 flex-col gap-3">
+      <CardContent className="flex flex-1 flex-col gap-4">
+        {/* Step 1: Open SharePoint */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">1</span>
+            <span className="text-sm font-medium">Get the file from SharePoint</span>
+          </div>
+          <a
+            href={sharepointUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 hover:shadow-sm dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
+          >
+            <FolderDown className="h-5 w-5 shrink-0" />
+            <span className="flex-1">{sharepointLabel}</span>
+            <ExternalLink className="h-4 w-4 shrink-0 opacity-60" />
+          </a>
+        </div>
+
+        {/* Step 2: Drop file */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">2</span>
+            <span className="text-sm font-medium">Drag the downloaded file here</span>
+          </div>
         {!file ? (
           <div
             {...getRootProps()}
-            className={`flex flex-1 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 transition-colors ${
+            className={`flex flex-1 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-all ${
               isDragActive
-                ? 'border-primary bg-primary/5'
-                : 'border-muted-foreground/25 hover:border-muted-foreground/50'
+                ? 'border-primary bg-primary/10 shadow-inner'
+                : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
             } ${loading ? 'pointer-events-none opacity-60' : ''}`}
           >
             <input {...getInputProps()} />
-            <Upload className="mb-2 h-8 w-8 text-muted-foreground" />
+            <Upload className={`mb-2 h-8 w-8 ${isDragActive ? 'text-primary' : 'text-muted-foreground'}`} />
             <p className="text-center text-sm font-medium">
-              {isDragActive ? 'Drop the parquet file here' : 'Drag & drop or click to upload'}
+              {isDragActive ? 'Drop it here!' : 'Drag & drop or click to select file'}
             </p>
-            <p className="mt-1 text-center text-xs text-muted-foreground">Expected filename: {accept}</p>
+            <p className="mt-1 text-center text-xs text-muted-foreground">Accepts .parquet files</p>
           </div>
         ) : (
           <div className="rounded-lg border p-4">
@@ -105,6 +136,7 @@ function UploadCard({ title, description, accept, file, result, loading, onDrop,
             )}
           </div>
         )}
+        </div>
       </CardContent>
     </Card>
   )
@@ -185,6 +217,8 @@ export default function DataUploadPage() {
           onDrop={handleFleetDrop}
           onReset={resetFleet}
           icon={<Database className="h-5 w-5" />}
+          sharepointUrl={SHAREPOINT_LINKS.fleet}
+          sharepointLabel="Open Fleet Data folder in SharePoint"
         />
         <UploadCard
           title="RMA Data"
@@ -196,6 +230,8 @@ export default function DataUploadPage() {
           onDrop={handleRmaDrop}
           onReset={resetRma}
           icon={<FileSpreadsheet className="h-5 w-5" />}
+          sharepointUrl={SHAREPOINT_LINKS.rma}
+          sharepointLabel="Open RMA Data folder in SharePoint"
         />
       </div>
 
