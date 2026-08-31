@@ -36,6 +36,70 @@ function safeTelemetryMetric(raw: string | undefined): string {
   return TELEMETRY_METRIC_SAFE[lower] ?? 'dc_voltage'
 }
 
+// Safety-net for telemetry groupBy — LLM often returns "day", "inverter", etc.
+const TELEMETRY_GROUPBY_SAFE: Record<string, string> = {
+  site: 'site_id', site_id: 'site_id', sites: 'site_id',
+  serial: 'serial_number', serial_number: 'serial_number',
+  inverter: 'serial_number', inverters: 'serial_number', microinverter: 'serial_number',
+  sku: 'sku_name', sku_name: 'sku_name', product: 'sku_name', model: 'sku_name',
+  none: 'none', total: 'none', all: 'none', overall: 'none',
+  // time-based terms → none (time bucketing is handled by granularity in time_series)
+  day: 'none', daily: 'none', date: 'none', hour: 'none', hourly: 'none',
+  week: 'none', weekly: 'none', month: 'none', monthly: 'none', time: 'none',
+}
+
+function safeTelemetryGroupBy(raw: string | undefined, allowNone = true): string {
+  if (!raw) return 'site_id'
+  const lower = raw.toLowerCase().trim()
+  const mapped = TELEMETRY_GROUPBY_SAFE[lower]
+  if (mapped) return (!allowNone && mapped === 'none') ? 'site_id' : mapped
+  return 'site_id'
+}
+
+// Safety-net for fleet groupBy — LLM often returns "region" instead of "tss_region"
+const FLEET_GROUPBY_SAFE: Record<string, string> = {
+  region: 'tss_region', tss_region: 'tss_region', regions: 'tss_region',
+  country: 'country', countries: 'country', tss_country: 'tss_country',
+  product: 'product_type', product_type: 'product_type', model: 'product_type',
+  sku: 'product_type', inverter: 'product_type',
+  quarter: 'quarter_first_interval', quarter_first_interval: 'quarter_first_interval',
+  quarter_created: 'quarter_device_created', quarter_device_created: 'quarter_device_created',
+  city: 'city', state: 'state',
+  wafer: 'module_wafer', module_wafer: 'module_wafer',
+  power_bucket: 'power_bucket', power_block: 'power_block',
+  pv_module_make: 'pv_module_make', pv_module_model: 'pv_module_model',
+  device_type_name: 'device_type_name', region_bundle: 'region_bundle',
+}
+
+const VALID_FLEET_DIMS = new Set([
+  'country', 'tss_region', 'tss_country', 'region_bundle',
+  'product_type', 'module_wafer', 'power_bucket', 'power_block',
+  'quarter_first_interval', 'quarter_device_created', 'city', 'state',
+  'pv_module_make', 'pv_module_model', 'device_type_name',
+])
+
+function safeFleetGroupBy(raw: string[] | undefined): string[] {
+  if (!raw?.length) return ['tss_region']
+  return raw.map((g) => {
+    const lower = g.toLowerCase().trim()
+    if (VALID_FLEET_DIMS.has(lower)) return lower
+    return FLEET_GROUPBY_SAFE[lower] ?? 'tss_region'
+  })
+}
+
+// Safety-net for time series granularity
+const GRANULARITY_SAFE: Record<string, string> = {
+  '5min': '5min', '15min': '15min', hour: 'hour', day: 'day', week: 'week', month: 'month',
+  hourly: 'hour', daily: 'day', weekly: 'week', monthly: 'month',
+  '1h': 'hour', '1d': 'day', '1w': 'week', '1m': 'month',
+  minute: '5min', minutes: '5min',
+}
+
+function safeGranularity(raw: string | undefined): string {
+  if (!raw) return 'hour'
+  return GRANULARITY_SAFE[raw.toLowerCase().trim()] ?? 'hour'
+}
+
 export class ToolNotFoundError extends Error {
   readonly toolName: string
   constructor(toolName: string) {
@@ -80,7 +144,7 @@ function buildToolParams(request: AnalysisRequest): Record<string, unknown> {
       return {
         metric:      request.metric ?? 'unit_count',
         aggregation: request.aggregation ?? 'sum',
-        groupBy:     request.groupBy ?? ['tss_region'],
+        groupBy:     safeFleetGroupBy(request.groupBy),
         filters:     { ...fleetFilters, ...(skuNames.length > 0 ? { skuNames } : {}) },
         limit:       request.limit ?? 50,
       }
@@ -138,25 +202,41 @@ function buildToolParams(request: AnalysisRequest): Record<string, unknown> {
     case 'get_telemetry_statistics':
       return {
         metric:  safeTelemetryMetric(request.metric),
-        groupBy: request.groupBy?.[0] ?? 'site_id',
+        groupBy: safeTelemetryGroupBy(request.groupBy?.[0]),
         filters: { siteIds, serials, skuNames, from, to },
         limit:   request.limit ?? 100,
       }
-    case 'get_time_series':
+    case 'get_time_series': {
+      // LLM may put time terms ("day", "daily") in groupBy — route them to granularity
+      const TIME_TERMS = new Set(['day', 'daily', 'hour', 'hourly', 'week', 'weekly', 'month', 'monthly', '5min', '15min', '1h', '1d', '1w', '1m', 'minute', 'minutes'])
+      const gArr = request.groupBy ?? []
+      let tsGranularity = 'day'
+      let tsGroupBy = 'none'
+      for (const g of gArr) {
+        const lower = g.toLowerCase().trim()
+        if (TIME_TERMS.has(lower)) {
+          tsGranularity = lower
+        } else {
+          tsGroupBy = lower
+        }
+      }
       return {
         metric:      safeTelemetryMetric(request.metric),
-        granularity: 'hour',
-        groupBy:     request.groupBy?.[0] ?? 'site_id',
+        granularity: safeGranularity(tsGranularity),
+        groupBy:     safeTelemetryGroupBy(tsGroupBy === 'none' ? undefined : tsGroupBy, true),
         filters:     { siteIds, serials, skuNames, from, to },
         limit:       request.limit ?? 500,
       }
-    case 'compare_telemetry':
+    }
+    case 'compare_telemetry': {
+      const cmpGroup = safeTelemetryGroupBy(request.groupBy?.[0] ?? 'sku_name', false)
       return {
         metric:  safeTelemetryMetric(request.metric),
-        groupBy: request.groupBy?.[0] ?? 'sku_name',
+        groupBy: cmpGroup === 'none' ? 'sku_name' : cmpGroup,
         filters: { siteIds, serials, skuNames, from, to },
         limit:   request.limit ?? 100,
       }
+    }
 
     // ── Performance tools ─────────────────────────────────────────────────────
     case 'calculate_clipping':
