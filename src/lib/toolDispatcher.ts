@@ -241,7 +241,7 @@ function buildToolParams(request: AnalysisRequest): Record<string, unknown> {
     // ── Performance tools ─────────────────────────────────────────────────────
     case 'calculate_clipping':
       return {
-        siteIds: siteIds.length > 0 ? siteIds : [''],
+        siteIds: siteIds.filter(Boolean),
         from,
         to,
         isFrance:            false,

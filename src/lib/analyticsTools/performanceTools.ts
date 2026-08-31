@@ -34,7 +34,7 @@ function buildDateFilter(from?: string, to?: string): string {
 // ─── Tool 1: calculate_clipping ──────────────────────────────────────────────
 
 const CalculateClippingParams = z.object({
-  siteIds:              z.array(z.string()).min(1),
+  siteIds:              z.array(z.string()).default([]),
   from:                 z.string().optional(),
   to:                   z.string().optional(),
   isFrance:             z.boolean().default(false),

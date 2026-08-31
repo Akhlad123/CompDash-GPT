@@ -300,9 +300,10 @@ export function buildClippingHourlyQuery(
   siteIds: string[],
   dateRange: { from: Date; to: Date } | null = null
 ): string {
+  const validIds = siteIds.filter(Boolean)
   const siteFilter =
-    siteIds.length > 0
-      ? `AND site_id IN (${siteIds.map((s) => `'${s}'`).join(', ')})`
+    validIds.length > 0
+      ? `AND site_id IN (${validIds.map((s) => `'${s}'`).join(', ')})`
       : ''
   return QUERY_CLIPPING_HOURLY
     .replace('{site_filter}', siteFilter)
