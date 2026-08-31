@@ -250,6 +250,7 @@ export class IntentParseError extends Error {
 
 // Metric aliases Gemini (and other LLMs) commonly return instead of the exact column names
 const METRIC_ALIAS_MAP: Record<string, string> = {
+  // unit_count aliases
   site_count: 'unit_count',
   sites: 'unit_count',
   count: 'unit_count',
@@ -257,19 +258,67 @@ const METRIC_ALIAS_MAP: Record<string, string> = {
   total_sites: 'unit_count',
   units: 'unit_count',
   total_units: 'unit_count',
+  num_units: 'unit_count',
+  number_of_units: 'unit_count',
+  number_of_sites: 'unit_count',
+  inverters: 'unit_count',
+  microinverters: 'unit_count',
+  num_inverters: 'unit_count',
+  // stc_mwdc aliases
   power: 'stc_mwdc',
   capacity: 'stc_mwdc',
+  dc_power: 'stc_mwdc',
+  dc_capacity: 'stc_mwdc',
+  stc_power: 'stc_mwdc',
+  mw_dc: 'stc_mwdc',
+  mw: 'stc_mwdc',
+  // mwac aliases
+  ac_power: 'mwac',
+  ac_capacity: 'mwac',
+  mw_ac: 'mwac',
+  // dc_ac_ratio aliases
+  'dc/ac_ratio': 'dc_ac_ratio',
+  'dc/ac': 'dc_ac_ratio',
+  dcac_ratio: 'dc_ac_ratio',
+  dcac: 'dc_ac_ratio',
+  ratio: 'dc_ac_ratio',
+  // irradiance aliases
   irradiance: 'irr_ann_kwh_m2_month',
+  solar_irradiance: 'irr_ann_kwh_m2_month',
+  annual_irradiance: 'irr_ann_kwh_m2_month',
+  irr: 'irr_ann_kwh_m2_month',
+  ghi: 'irr_ann_kwh_m2_month',
+  // rating aliases
   rating: 'stc_rating2',
   stc_rating: 'stc_rating2',
+  panel_rating: 'stc_rating2',
+  module_rating: 'stc_rating2',
+  // voc / isc aliases
+  open_circuit_voltage: 'voc',
+  voltage: 'voc',
+  short_circuit_current: 'isc',
+  current: 'isc',
 }
+
+// Valid metric values for fleet tools (must match FLEET_NUMERIC_COLS in fleetTools.ts)
+const VALID_FLEET_METRICS = new Set([
+  'unit_count', 'stc_mwdc', 'mwac', 'dc_ac_ratio',
+  'stc_rating2', 'irr_ann_kwh_m2_month', 'voc', 'isc',
+])
 
 /** Fix common LLM mistakes in the parsed JSON before Zod validation. */
 function normalizeAnalysisRequest(parsed: Record<string, unknown>): void {
   // Fix invalid metric values
   if (typeof parsed['metric'] === 'string') {
-    const alias = METRIC_ALIAS_MAP[parsed['metric']]
-    if (alias) parsed['metric'] = alias
+    const raw = parsed['metric'].toLowerCase().trim()
+    const alias = METRIC_ALIAS_MAP[raw]
+    if (alias) {
+      parsed['metric'] = alias
+    } else if (!VALID_FLEET_METRICS.has(raw)) {
+      // LLM returned an unrecognized metric — default to unit_count
+      console.warn(`[intentRouter] Unrecognized metric "${parsed['metric']}", defaulting to unit_count`)
+      parsed['metric'] = 'unit_count'
+    }
   }
 
   // Ensure unanswerable defaults to false if not present
