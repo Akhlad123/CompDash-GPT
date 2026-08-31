@@ -284,6 +284,27 @@ function extractGeminiResponse(json: Record<string, unknown>): {
   return { text, promptTokens, completionTokens }
 }
 
+/** Translates Gemini API HTTP errors into clear, user-friendly messages. */
+function friendlyGeminiError(status: number, body: string): string {
+  const lower = body.toLowerCase()
+  if (status === 429) {
+    if (lower.includes('quota') || lower.includes('resource_exhausted')) {
+      return 'You have run out of free Gemini tokens for today. The daily quota resets at midnight Pacific Time. You can also switch to Ollama (local) in Settings, or wait and try again later.'
+    }
+    return 'Gemini rate limit reached — too many requests per minute. Please wait a moment and try again (free tier allows ~15 requests/minute).'
+  }
+  if (status === 403) {
+    if (lower.includes('api_key') || lower.includes('permission')) {
+      return 'Gemini API key is invalid or does not have permission. Please check your API key in Settings.'
+    }
+    return 'Access to Gemini API was denied. Please verify your API key in Settings.'
+  }
+  if (status === 400 && lower.includes('api_key')) {
+    return 'Gemini API key is missing or malformed. Please add a valid key in Settings.'
+  }
+  return `Gemini returned an error (HTTP ${status}). ${body.slice(0, 150)}`
+}
+
 // ─── Gemini provider ────────────────────────────────────────────────────────
 
 class GeminiProvider implements LLMProvider {
@@ -383,7 +404,7 @@ class GeminiProvider implements LLMProvider {
     if (!response.ok) {
       const errBody = await response.text().catch(() => '')
       throw makeLLMError(
-        `Gemini returned HTTP ${response.status}: ${errBody.slice(0, 200)}`,
+        friendlyGeminiError(response.status, errBody),
         response.status === 429 ? 'timeout' : 'model_error',
         'gemini'
       )
@@ -481,7 +502,11 @@ class GeminiProvider implements LLMProvider {
     if (!response.ok || !response.body) {
       clearTimeout(timerId)
       const errBody = await response.text().catch(() => '')
-      throw makeLLMError(`Gemini stream HTTP ${response.status}: ${errBody.slice(0, 200)}`, 'model_error', 'gemini')
+      throw makeLLMError(
+        friendlyGeminiError(response.status, errBody),
+        response.status === 429 ? 'timeout' : 'model_error',
+        'gemini'
+      )
     }
 
     const reader = response.body.getReader()
