@@ -249,8 +249,9 @@ export class IntentParseError extends Error {
 }
 
 // Metric aliases Gemini (and other LLMs) commonly return instead of the exact column names
-const METRIC_ALIAS_MAP: Record<string, string> = {
-  // unit_count aliases
+// Separated by domain so fleet aliases (dc_power → stc_mwdc) don't clobber telemetry (dc_power is valid).
+
+const FLEET_METRIC_ALIAS: Record<string, string> = {
   site_count: 'unit_count',
   sites: 'unit_count',
   count: 'unit_count',
@@ -264,7 +265,6 @@ const METRIC_ALIAS_MAP: Record<string, string> = {
   inverters: 'unit_count',
   microinverters: 'unit_count',
   num_inverters: 'unit_count',
-  // stc_mwdc aliases
   power: 'stc_mwdc',
   capacity: 'stc_mwdc',
   dc_power: 'stc_mwdc',
@@ -272,52 +272,126 @@ const METRIC_ALIAS_MAP: Record<string, string> = {
   stc_power: 'stc_mwdc',
   mw_dc: 'stc_mwdc',
   mw: 'stc_mwdc',
-  // mwac aliases
   ac_power: 'mwac',
   ac_capacity: 'mwac',
   mw_ac: 'mwac',
-  // dc_ac_ratio aliases
   'dc/ac_ratio': 'dc_ac_ratio',
   'dc/ac': 'dc_ac_ratio',
   dcac_ratio: 'dc_ac_ratio',
   dcac: 'dc_ac_ratio',
   ratio: 'dc_ac_ratio',
-  // irradiance aliases
   irradiance: 'irr_ann_kwh_m2_month',
   solar_irradiance: 'irr_ann_kwh_m2_month',
   annual_irradiance: 'irr_ann_kwh_m2_month',
   irr: 'irr_ann_kwh_m2_month',
   ghi: 'irr_ann_kwh_m2_month',
-  // rating aliases
   rating: 'stc_rating2',
   stc_rating: 'stc_rating2',
   panel_rating: 'stc_rating2',
   module_rating: 'stc_rating2',
-  // voc / isc aliases
   open_circuit_voltage: 'voc',
   voltage: 'voc',
   short_circuit_current: 'isc',
   current: 'isc',
 }
 
-// Valid metric values for fleet tools (must match FLEET_NUMERIC_COLS in fleetTools.ts)
+const TELEMETRY_METRIC_ALIAS: Record<string, string> = {
+  // dc_voltage aliases
+  voltage: 'dc_voltage',
+  vmp: 'dc_voltage',
+  v_mp: 'dc_voltage',
+  vdc: 'dc_voltage',
+  panel_voltage: 'dc_voltage',
+  module_voltage: 'dc_voltage',
+  string_voltage: 'dc_voltage',
+  mppt_voltage: 'dc_voltage',
+  // dc_current aliases
+  current: 'dc_current',
+  imp: 'dc_current',
+  i_mp: 'dc_current',
+  idc: 'dc_current',
+  panel_current: 'dc_current',
+  // dc_power aliases
+  power: 'dc_power',
+  dc: 'dc_power',
+  watt: 'dc_power',
+  watts: 'dc_power',
+  // ac_power aliases
+  ac: 'ac_power',
+  ac_watt: 'ac_power',
+  output_power: 'ac_power',
+  // ac_voltage aliases
+  vac: 'ac_voltage',
+  grid_voltage: 'ac_voltage',
+  line_voltage: 'ac_voltage',
+  // ac_frequency aliases
+  frequency: 'ac_frequency',
+  freq: 'ac_frequency',
+  hz: 'ac_frequency',
+  grid_frequency: 'ac_frequency',
+  // temperature aliases
+  temperature: 'temperature_c',
+  temp: 'temperature_c',
+  temp_c: 'temperature_c',
+  celsius: 'temperature_c',
+  temp_f: 'temperature_f',
+  fahrenheit: 'temperature_f',
+  // energy aliases
+  energy: 'energy_produced',
+  production: 'energy_produced',
+  yield: 'energy_produced',
+  kwh: 'energy_produced',
+  wh: 'energy_produced',
+}
+
 const VALID_FLEET_METRICS = new Set([
   'unit_count', 'stc_mwdc', 'mwac', 'dc_ac_ratio',
   'stc_rating2', 'irr_ann_kwh_m2_month', 'voc', 'isc',
 ])
 
+const VALID_TELEMETRY_METRICS = new Set([
+  'energy_produced', 'dc_power', 'ac_power', 'temperature_c', 'temperature_f',
+  'dc_current', 'dc_voltage', 'ac_voltage', 'ac_frequency', 'duration',
+])
+
+const TELEMETRY_TOOLS = new Set([
+  'get_telemetry_statistics', 'get_time_series', 'compare_telemetry',
+  'calculate_clipping', 'calculate_energy', 'compare_energy',
+  'calculate_energy_per_inverter', 'detect_anomalies',
+])
+
 /** Fix common LLM mistakes in the parsed JSON before Zod validation. */
 function normalizeAnalysisRequest(parsed: Record<string, unknown>): void {
-  // Fix invalid metric values
+  // Fix invalid metric values — pick alias map based on tool context
   if (typeof parsed['metric'] === 'string') {
     const raw = parsed['metric'].toLowerCase().trim()
-    const alias = METRIC_ALIAS_MAP[raw]
-    if (alias) {
-      parsed['metric'] = alias
-    } else if (!VALID_FLEET_METRICS.has(raw)) {
-      // LLM returned an unrecognized metric — default to unit_count
-      console.warn(`[intentRouter] Unrecognized metric "${parsed['metric']}", defaulting to unit_count`)
-      parsed['metric'] = 'unit_count'
+    const tool = typeof parsed['tool'] === 'string' ? parsed['tool'] : ''
+    const isTelemetry = TELEMETRY_TOOLS.has(tool)
+
+    if (isTelemetry) {
+      if (VALID_TELEMETRY_METRICS.has(raw)) {
+        parsed['metric'] = raw
+      } else {
+        const alias = TELEMETRY_METRIC_ALIAS[raw]
+        if (alias) {
+          parsed['metric'] = alias
+        } else {
+          console.warn(`[intentRouter] Unrecognized telemetry metric "${parsed['metric']}", defaulting to dc_voltage`)
+          parsed['metric'] = 'dc_voltage'
+        }
+      }
+    } else {
+      if (VALID_FLEET_METRICS.has(raw)) {
+        parsed['metric'] = raw
+      } else {
+        const alias = FLEET_METRIC_ALIAS[raw]
+        if (alias) {
+          parsed['metric'] = alias
+        } else {
+          console.warn(`[intentRouter] Unrecognized fleet metric "${parsed['metric']}", defaulting to unit_count`)
+          parsed['metric'] = 'unit_count'
+        }
+      }
     }
   }
 
