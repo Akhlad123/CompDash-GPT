@@ -6,6 +6,36 @@ import { TOOL_REGISTRY } from './analyticsTools'
 import type { ToolResult } from './analyticsTools'
 import type { AnalysisRequest } from './intentRouter'
 
+// Safety-net alias map for telemetry metrics — catches anything the intent router missed
+const TELEMETRY_METRIC_SAFE: Record<string, string> = {
+  voltage: 'dc_voltage', vmp: 'dc_voltage', v_mp: 'dc_voltage', vdc: 'dc_voltage',
+  panel_voltage: 'dc_voltage', module_voltage: 'dc_voltage', string_voltage: 'dc_voltage',
+  mppt_voltage: 'dc_voltage',
+  current: 'dc_current', imp: 'dc_current', i_mp: 'dc_current', idc: 'dc_current',
+  panel_current: 'dc_current',
+  power: 'dc_power', dc: 'dc_power', watt: 'dc_power', watts: 'dc_power',
+  ac: 'ac_power', ac_watt: 'ac_power', output_power: 'ac_power',
+  vac: 'ac_voltage', grid_voltage: 'ac_voltage', line_voltage: 'ac_voltage',
+  frequency: 'ac_frequency', freq: 'ac_frequency', hz: 'ac_frequency',
+  grid_frequency: 'ac_frequency',
+  temperature: 'temperature_c', temp: 'temperature_c', temp_c: 'temperature_c',
+  celsius: 'temperature_c', temp_f: 'temperature_f', fahrenheit: 'temperature_f',
+  energy: 'energy_produced', production: 'energy_produced', yield: 'energy_produced',
+  kwh: 'energy_produced', wh: 'energy_produced',
+}
+
+const VALID_TELEMETRY_METRICS = new Set([
+  'energy_produced', 'dc_power', 'ac_power', 'temperature_c', 'temperature_f',
+  'dc_current', 'dc_voltage', 'ac_voltage', 'ac_frequency', 'duration',
+])
+
+function safeTelemetryMetric(raw: string | undefined): string {
+  if (!raw) return 'energy_produced'
+  const lower = raw.toLowerCase().trim()
+  if (VALID_TELEMETRY_METRICS.has(lower)) return lower
+  return TELEMETRY_METRIC_SAFE[lower] ?? 'dc_voltage'
+}
+
 export class ToolNotFoundError extends Error {
   readonly toolName: string
   constructor(toolName: string) {
@@ -107,14 +137,14 @@ function buildToolParams(request: AnalysisRequest): Record<string, unknown> {
     // ── Telemetry tools ───────────────────────────────────────────────────────
     case 'get_telemetry_statistics':
       return {
-        metric:  request.metric ?? 'energy_produced',
+        metric:  safeTelemetryMetric(request.metric),
         groupBy: request.groupBy?.[0] ?? 'site_id',
         filters: { siteIds, serials, skuNames, from, to },
         limit:   request.limit ?? 100,
       }
     case 'get_time_series':
       return {
-        metric:      request.metric ?? 'energy_produced',
+        metric:      safeTelemetryMetric(request.metric),
         granularity: 'hour',
         groupBy:     request.groupBy?.[0] ?? 'site_id',
         filters:     { siteIds, serials, skuNames, from, to },
@@ -122,7 +152,7 @@ function buildToolParams(request: AnalysisRequest): Record<string, unknown> {
       }
     case 'compare_telemetry':
       return {
-        metric:  request.metric ?? 'energy_produced',
+        metric:  safeTelemetryMetric(request.metric),
         groupBy: request.groupBy?.[0] ?? 'sku_name',
         filters: { siteIds, serials, skuNames, from, to },
         limit:   request.limit ?? 100,
