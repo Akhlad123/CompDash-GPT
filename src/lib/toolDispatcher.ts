@@ -260,7 +260,7 @@ function buildToolParams(request: AnalysisRequest): Record<string, unknown> {
       }
     case 'detect_anomalies':
       return {
-        siteIds:          siteIds.length > 0 ? siteIds : [''],
+        siteIds:          siteIds.filter(Boolean),
         from,
         to,
         alertThreshold:   2.0,

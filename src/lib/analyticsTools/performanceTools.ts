@@ -17,8 +17,9 @@ import { resolveRatedAcPower } from '@/lib/semanticCatalog'
 
 function escapeSql(s: string): string { return s.replace(/'/g, "''") }
 function buildSiteFilter(ids?: string[]): string {
-  if (!ids?.length) return ''
-  return `AND site_id IN (${ids.map((s) => `'${escapeSql(s)}'`).join(', ')})`
+  const valid = ids?.filter(Boolean)
+  if (!valid?.length) return ''
+  return `AND site_id IN (${valid.map((s) => `'${escapeSql(s)}'`).join(', ')})`
 }
 function buildSerialFilter(ids?: string[]): string {
   if (!ids?.length) return ''
@@ -201,7 +202,7 @@ export const calculateUtilizationTool: AnalyticsTool<CalculateUtilizationParams>
 // ─── Tool 3: detect_anomalies ─────────────────────────────────────────────────
 
 const DetectAnomaliesParams = z.object({
-  siteIds:         z.array(z.string()).min(1).max(20),
+  siteIds:         z.array(z.string()).max(20).default([]),
   from:            z.string().optional(),
   to:              z.string().optional(),
   alertThreshold:  z.number().min(0).default(2.0),
