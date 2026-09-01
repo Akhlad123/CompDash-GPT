@@ -91,7 +91,7 @@ RULES:
 10. For product names: IQ9N, IQ8HC, IQ8P, IQ8H, IQ8M, IQ7A etc. are microinverter SKU families.
 11. For regions: NA=North America, EURO=Europe, BR=Brazil, ANZP=Australia/NZ, LATAM=Latin America, IN=India, EMKT=Emerging Market.
 12. Microinverter level analysis: if the user asks "by microinverter" or "by serial" → groupBy: ["serial_number"].
-13. System expansion (Project Lotto): if the question mentions "system expansion", "lotto", "expanded sites", "upgraded systems", "multi-generation", "sites with IQ7 and IQ8/IQ9", "how many sites have been expanded", or asks about sites that have multiple microinverter generations → use get_system_expansion. The tool detects sites where older generation microinverters (IQ6/IQ7) coexist with newer ones (IQ8/IQ9) under the same site_id. Use groupBy: ["summary"] for counts, ["details"] for site-level breakdown, ["trend"] for expansion pattern analysis. Default to summary.
+13. System expansion (Project Lotto): if the question mentions "system expansion", "lotto", "expanded sites", "upgraded systems", "multi-generation", "sites with IQ7 and IQ8/IQ9", "how many sites have been expanded", "density", "hotspot", "which products added" → use get_system_expansion. The tool detects sites where IQ7-series microinverters coexist with IQ8/IQ9 under the same site_id. Use groupBy: ["summary"] for counts, ["details"] for site-level breakdown with site IDs, ["trend"] for expansion path analysis (IQ7→IQ8 vs IQ7→IQ9), ["density"] for geographic hotspots (states/cities with highest concentration — use for "highest density", "which region has most expansion", "where is expansion concentrated"), ["top_products"] for which IQ8/IQ9 SKUs are most commonly added. Default to summary.
 
 FEW-SHOT EXAMPLES:
 
@@ -241,6 +241,18 @@ A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["detail
 
 Q: "Project Lotto analysis"
 A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["summary"],"visualization":"table","confidence":"high"}
+
+Q: "Which region in the US has the highest density system expansion"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["density"],"filters":{"countries":["United States"]},"visualization":"table","confidence":"high"}
+
+Q: "Where is system expansion most concentrated globally"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["density"],"visualization":"table","confidence":"high"}
+
+Q: "Which IQ8 or IQ9 products are most commonly added in Lotto sites"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["top_products"],"visualization":"table","confidence":"high"}
+
+Q: "Top expansion products in Europe"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["top_products"],"filters":{"tssRegions":["EURO"]},"visualization":"table","confidence":"high"}
 
 Q: "What will the revenue be next quarter?"
 A: {"intent":"unanswerable","tool":"","unanswerable":true,"confidence":"high","caveat":"Revenue and financial forecasts are not available in fleet or telemetry data."}

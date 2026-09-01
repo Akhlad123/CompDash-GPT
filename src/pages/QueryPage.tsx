@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { Link } from 'react-router-dom'
+
 import {
   Loader2, Search, ChevronDown, ChevronRight, AlertTriangle, Sparkles,
   ExternalLink, MessageCircleQuestion, Clock, Info, HelpCircle, Database,
@@ -1071,13 +1071,15 @@ For solar terms: explain what it is, why it matters, and its impact on system pe
                             {columns.map((c) => (
                               <TableCell key={c} className="whitespace-nowrap">
                                 {c === 'site_id' && row[c] != null ? (
-                                  <Link
-                                    to={`/inverters?site=${encodeURIComponent(String(row[c]))}`}
+                                  <a
+                                    href={`https://enlighten.enphaseenergy.com/admin/sites/${encodeURIComponent(String(row[c]))}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
                                     className="inline-flex items-center gap-1 text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
                                   >
                                     {String(row[c])}
                                     <ExternalLink className="h-3 w-3 shrink-0" />
-                                  </Link>
+                                  </a>
                                 ) : (
                                   safeCell(row[c], c)
                                 )}

@@ -329,8 +329,10 @@ function buildToolParams(request: AnalysisRequest): Record<string, unknown> {
     case 'get_system_expansion': {
       // LLM may signal mode via groupBy or we infer from context
       const modeHint = (request.groupBy?.[0] ?? '').toLowerCase()
-      const mode = (['summary', 'details', 'trend'] as const).includes(modeHint as 'summary' | 'details' | 'trend')
-        ? modeHint as 'summary' | 'details' | 'trend'
+      const VALID_MODES = ['summary', 'details', 'trend', 'density', 'top_products'] as const
+      type LottoMode = typeof VALID_MODES[number]
+      const mode: LottoMode = VALID_MODES.includes(modeHint as LottoMode)
+        ? modeHint as LottoMode
         : 'summary'
       return {
         mode,

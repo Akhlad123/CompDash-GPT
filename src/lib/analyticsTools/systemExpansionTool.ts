@@ -80,7 +80,7 @@ function buildLottoCTE(whereClause: string): string {
 // ─── Parameters ─────────────────────────────────────────────────────────────
 
 const SystemExpansionParams = z.object({
-  mode: z.enum(['summary', 'details', 'trend']).default('summary'),
+  mode: z.enum(['summary', 'details', 'trend', 'density', 'top_products']).default('summary'),
   filters: z.object({
     tssRegions:   z.array(z.string()).optional(),
     countries:    z.array(z.string()).optional(),
@@ -202,37 +202,111 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
     }
   }
 
-  // mode === 'trend'
-  // Which old-gen → new-gen transitions are most common, by region
-  const sql = `
-    WITH ${cte},
-    old_gens AS (
-      SELECT DISTINCT site_id, gen_family AS old_family
-      FROM lotto_sites WHERE gen_class = 'old'
-    ),
-    new_gens AS (
-      SELECT DISTINCT site_id, gen_family AS new_family
-      FROM lotto_sites WHERE gen_class = 'new'
-    ),
-    transitions AS (
+  if (params.mode === 'trend') {
+    // Which old-gen → new-gen transitions are most common, by region
+    const sql = `
+      WITH ${cte},
+      old_gens AS (
+        SELECT DISTINCT site_id, gen_family AS old_family
+        FROM lotto_sites WHERE gen_class = 'old'
+      ),
+      new_gens AS (
+        SELECT DISTINCT site_id, gen_family AS new_family
+        FROM lotto_sites WHERE gen_class = 'new'
+      ),
+      transitions AS (
+        SELECT
+          o.site_id,
+          o.old_family,
+          n.new_family,
+          MIN(ls.tss_region) AS tss_region,
+          MIN(ls.country) AS country
+        FROM old_gens o
+        JOIN new_gens n ON o.site_id = n.site_id
+        JOIN lotto_sites ls ON ls.site_id = o.site_id
+        GROUP BY o.site_id, o.old_family, n.new_family
+      )
       SELECT
-        o.site_id,
-        o.old_family,
-        n.new_family,
-        MIN(ls.tss_region) AS tss_region,
-        MIN(ls.country) AS country
-      FROM old_gens o
-      JOIN new_gens n ON o.site_id = n.site_id
-      JOIN lotto_sites ls ON ls.site_id = o.site_id
-      GROUP BY o.site_id, o.old_family, n.new_family
-    )
+        COALESCE(tss_region, 'Unknown') AS tss_region,
+        old_family || ' → ' || new_family AS expansion_path,
+        COUNT(DISTINCT site_id) AS site_count,
+        LIST(DISTINCT country ORDER BY country) AS countries
+      FROM transitions
+      GROUP BY tss_region, old_family, new_family
+      ORDER BY site_count DESC
+      LIMIT ${params.limit}
+    `.trim()
+
+    const rows = await query<Record<string, unknown>>(sql)
+    return {
+      rows,
+      metadata: {
+        tool: 'get_system_expansion',
+        params: params as unknown as Record<string, unknown>,
+        sql,
+        executionMs: Date.now() - started,
+        rowCount: rows.length,
+        warning: rows.length === 0 ? 'No Lotto expansion trends found.' : undefined,
+      },
+    }
+  }
+
+  if (params.mode === 'density') {
+    // Geographic density: group Lotto sites by country+state to find clusters
+    const sql = `
+      WITH ${cte},
+      site_loc AS (
+        SELECT DISTINCT
+          site_id,
+          MIN(tss_region) AS tss_region,
+          MIN(country) AS country,
+          MIN(state) AS state,
+          MIN(city) AS city
+        FROM lotto_sites
+        GROUP BY site_id
+      )
+      SELECT
+        COALESCE(tss_region, 'Unknown') AS tss_region,
+        COALESCE(country, 'Unknown') AS country,
+        COALESCE(state, 'Unknown') AS state,
+        COUNT(*) AS lotto_site_count,
+        LIST(DISTINCT city ORDER BY city) AS cities
+      FROM site_loc
+      GROUP BY tss_region, country, state
+      HAVING lotto_site_count >= 1
+      ORDER BY lotto_site_count DESC
+      LIMIT ${params.limit}
+    `.trim()
+
+    const rows = await query<Record<string, unknown>>(sql)
+    return {
+      rows,
+      metadata: {
+        tool: 'get_system_expansion',
+        params: params as unknown as Record<string, unknown>,
+        sql,
+        executionMs: Date.now() - started,
+        rowCount: rows.length,
+        warning: rows.length === 0
+          ? 'No Lotto density data found.'
+          : 'Ranked by number of Lotto sites per state/province — highest density areas are best targets for expansion programs.',
+      },
+    }
+  }
+
+  // mode === 'top_products'
+  // Which specific IQ8/IQ9 SKUs are most commonly added to IQ7 sites
+  const sql = `
+    WITH ${cte}
     SELECT
       COALESCE(tss_region, 'Unknown') AS tss_region,
-      old_family || ' → ' || new_family AS expansion_path,
+      product_type,
+      gen_class,
+      gen_family,
       COUNT(DISTINCT site_id) AS site_count,
-      LIST(DISTINCT country ORDER BY country) AS countries
-    FROM transitions
-    GROUP BY tss_region, old_family, new_family
+      SUM(unit_count) AS total_units
+    FROM lotto_sites
+    GROUP BY tss_region, product_type, gen_class, gen_family
     ORDER BY site_count DESC
     LIMIT ${params.limit}
   `.trim()
@@ -246,7 +320,9 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
       sql,
       executionMs: Date.now() - started,
       rowCount: rows.length,
-      warning: rows.length === 0 ? 'No Lotto expansion trends found.' : undefined,
+      warning: rows.length === 0
+        ? 'No product data found for Lotto sites.'
+        : 'Shows which microinverter SKUs appear most often in Lotto (system expansion) sites, by region.',
     },
   }
 }
@@ -258,11 +334,14 @@ export const systemExpansionTool: AnalyticsTool<SystemExpansionParams> = {
   description:
     'Analyze system expansion (Project Lotto) sites — sites where an IQ7-series system ' +
     'was expanded with IQ8 or IQ9 microinverters on the same site ID. ' +
-    'Three modes: "summary" returns regional counts of expanded sites, ' +
-    '"details" returns site-level breakdown with microinverter types and unit counts, ' +
-    '"trend" analyzes expansion patterns (which generation transitions are most common, by region). ' +
+    'Five modes: "summary" returns regional counts, ' +
+    '"details" returns site-level breakdown with site IDs and microinverter types, ' +
+    '"trend" analyzes expansion paths (IQ7→IQ8 vs IQ7→IQ9 by region), ' +
+    '"density" finds geographic hotspots (states/cities with most Lotto sites — for sales targeting), ' +
+    '"top_products" shows which IQ8/IQ9 SKUs are most commonly added. ' +
     'Use for "system expansion", "lotto", "expanded sites", "multi-generation sites", "upgraded systems", ' +
-    '"sites with IQ7 and IQ9", "how many sites have been expanded" questions.',
+    '"sites with IQ7 and IQ9", "how many sites have been expanded", "highest density expansion", ' +
+    '"which products are added most" questions.',
   parametersSchema: SystemExpansionParams,
   execute: executeSystemExpansion,
 }
