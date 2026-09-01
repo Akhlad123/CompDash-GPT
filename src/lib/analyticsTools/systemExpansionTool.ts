@@ -1,14 +1,13 @@
 // System Expansion (Project Lotto) analytics tool.
-// Identifies sites with multiple microinverter generations — indicating
-// that an older system (IQ6/IQ7) was expanded with newer hardware (IQ8/IQ9).
+// Identifies sites where an OLDER generation (IQ6/IQ7) was expanded with
+// NEWER generation hardware (IQ8/IQ9) under the same site_id.
 //
-// Generation classification:
-//   Gen 6: IQ6*
-//   Gen 7: IQ7*
-//   Gen 8: IQ8*
-//   Gen 9: IQ9*
+// DEFINITION: A site qualifies as "system expansion" / "Lotto" ONLY if it has:
+//   - At least one OLD-gen product (IQ6* or IQ7*), AND
+//   - At least one NEW-gen product (IQ8* or IQ9*)
 //
-// A "system expansion" site has products from 2+ distinct generations.
+// Sites with only IQ8+IQ9 (no IQ6/IQ7) do NOT qualify.
+// Sites with only IQ6+IQ7 (no IQ8/IQ9) do NOT qualify.
 
 import { z } from 'zod'
 import { query } from '@/lib/duckdb'
@@ -16,17 +15,48 @@ import { buildFleetFilter } from '@/lib/fleetQueries'
 import type { AnalyticsTool, ToolResult } from './types'
 import { MAX_RESULT_ROWS } from './types'
 
-// ─── Generation classifier SQL ──────────────────────────────────────────────
+// ─── Lotto qualification CTE (reused by all modes) ─────────────────────────
+// Classifies each product_type row as old_gen or new_gen, then filters to
+// sites that have BOTH.
 
-const GEN_CASE_SQL = `
-  CASE
-    WHEN UPPER(product_type) LIKE 'IQ6%' THEN 'Gen6'
-    WHEN UPPER(product_type) LIKE 'IQ7%' THEN 'Gen7'
-    WHEN UPPER(product_type) LIKE 'IQ8%' THEN 'Gen8'
-    WHEN UPPER(product_type) LIKE 'IQ9%' THEN 'Gen9'
-    ELSE 'Other'
-  END
-`.trim()
+function buildLottoCTE(whereClause: string): string {
+  return `
+    lotto_base AS (
+      SELECT
+        *,
+        CASE
+          WHEN UPPER(product_type) LIKE 'IQ6%' OR UPPER(product_type) LIKE 'IQ7%' THEN 'old'
+          WHEN UPPER(product_type) LIKE 'IQ8%' OR UPPER(product_type) LIKE 'IQ9%' THEN 'new'
+          ELSE NULL
+        END AS gen_class,
+        CASE
+          WHEN UPPER(product_type) LIKE 'IQ6%' THEN 'IQ6'
+          WHEN UPPER(product_type) LIKE 'IQ7%' THEN 'IQ7'
+          WHEN UPPER(product_type) LIKE 'IQ8%' THEN 'IQ8'
+          WHEN UPPER(product_type) LIKE 'IQ9%' THEN 'IQ9'
+          ELSE 'Other'
+        END AS gen_family
+      FROM fleet
+      WHERE product_type IS NOT NULL AND ${whereClause}
+    ),
+    site_qualification AS (
+      SELECT
+        site_id,
+        MAX(CASE WHEN gen_class = 'old' THEN 1 ELSE 0 END) AS has_old,
+        MAX(CASE WHEN gen_class = 'new' THEN 1 ELSE 0 END) AS has_new
+      FROM lotto_base
+      WHERE gen_class IS NOT NULL
+      GROUP BY site_id
+      HAVING has_old = 1 AND has_new = 1
+    ),
+    lotto_sites AS (
+      SELECT b.*
+      FROM lotto_base b
+      INNER JOIN site_qualification sq ON b.site_id = sq.site_id
+      WHERE b.gen_class IS NOT NULL
+    )
+  `.trim()
+}
 
 // ─── Parameters ─────────────────────────────────────────────────────────────
 
@@ -52,56 +82,36 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
     quarters:     params.filters?.quarters,
     tssCountries: params.filters?.tssCountries,
   })
+  const cte = buildLottoCTE(where)
 
   if (params.mode === 'summary') {
-    // High-level count: how many sites have 2+ generations, broken down by region
     const sql = `
-      WITH site_gens AS (
-        SELECT
-          site_id,
-          MIN(tss_region) AS tss_region,
-          MIN(country) AS country,
-          COUNT(DISTINCT ${GEN_CASE_SQL}) AS gen_count,
-          LIST(DISTINCT ${GEN_CASE_SQL} ORDER BY ${GEN_CASE_SQL}) AS generations,
-          LIST(DISTINCT product_type ORDER BY product_type) AS product_types,
-          SUM(unit_count) AS total_units
-        FROM fleet
-        WHERE product_type IS NOT NULL AND ${where}
-        GROUP BY site_id
-        HAVING gen_count >= 2
-      )
+      WITH ${cte}
       SELECT
         COALESCE(tss_region, 'Unknown') AS tss_region,
-        COUNT(*) AS expanded_site_count,
-        SUM(total_units) AS total_units,
-        ROUND(AVG(gen_count), 1) AS avg_generations,
-        LIST(DISTINCT unnested_gen ORDER BY unnested_gen) AS generations_seen
-      FROM site_gens, LATERAL UNNEST(generations) AS t(unnested_gen)
+        COUNT(DISTINCT site_id) AS expanded_site_count,
+        SUM(CASE WHEN gen_class = 'old' THEN unit_count ELSE 0 END) AS old_gen_units,
+        SUM(CASE WHEN gen_class = 'new' THEN unit_count ELSE 0 END) AS new_gen_units,
+        SUM(unit_count) AS total_units,
+        LIST(DISTINCT gen_family ORDER BY gen_family) AS generation_families
+      FROM lotto_sites
       GROUP BY tss_region
       ORDER BY expanded_site_count DESC
     `.trim()
 
     const rows = await query<Record<string, unknown>>(sql)
 
-    // Also get global total
+    // Global totals
     const totalSql = `
-      WITH site_gens AS (
-        SELECT site_id, COUNT(DISTINCT ${GEN_CASE_SQL}) AS gen_count
-        FROM fleet
-        WHERE product_type IS NOT NULL AND ${where}
-        GROUP BY site_id
-        HAVING gen_count >= 2
-      )
-      SELECT COUNT(*) AS total_expanded_sites FROM site_gens
+      WITH ${cte}
+      SELECT COUNT(DISTINCT site_id) AS total_expanded_sites FROM lotto_sites
     `.trim()
     const totalRows = await query<{ total_expanded_sites: number }>(totalSql)
     const totalExpanded = totalRows[0]?.total_expanded_sites ?? 0
 
-    // Total sites for percentage
     const allSitesSql = `
       SELECT COUNT(DISTINCT site_id) AS total_sites
-      FROM fleet
-      WHERE product_type IS NOT NULL AND ${where}
+      FROM fleet WHERE product_type IS NOT NULL AND ${where}
     `.trim()
     const allSitesRows = await query<{ total_sites: number }>(allSitesSql)
     const totalSites = allSitesRows[0]?.total_sites ?? 0
@@ -115,32 +125,31 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
         executionMs: Date.now() - started,
         rowCount: rows.length,
         warning: totalExpanded === 0
-          ? 'No system expansion (Lotto) sites found in the current data.'
-          : `${totalExpanded} sites out of ${totalSites} (${totalSites > 0 ? ((totalExpanded / totalSites) * 100).toFixed(1) : 0}%) have multiple microinverter generations (system expansion / Lotto). Would you like to see site-level details?`,
+          ? 'No system expansion (Lotto) sites found. Lotto = sites with old gen (IQ6/IQ7) AND new gen (IQ8/IQ9).'
+          : `${totalExpanded} Lotto sites out of ${totalSites} total (${totalSites > 0 ? ((totalExpanded / totalSites) * 100).toFixed(1) : 0}%). These sites originally had IQ6/IQ7 and were expanded with IQ8/IQ9. Would you like to see site-level details?`,
       },
     }
   }
 
   if (params.mode === 'details') {
-    // Site-level detail: each expanded site with its generations, unit counts, region
     const sql = `
-      WITH site_gens AS (
+      WITH ${cte},
+      site_detail AS (
         SELECT
           site_id,
           MIN(tss_region) AS tss_region,
           MIN(country) AS country,
           MIN(state) AS state,
           MIN(city) AS city,
-          COUNT(DISTINCT ${GEN_CASE_SQL}) AS gen_count,
-          LIST(DISTINCT ${GEN_CASE_SQL} ORDER BY ${GEN_CASE_SQL}) AS generations,
+          LIST(DISTINCT gen_family ORDER BY gen_family) AS generation_families,
           LIST(DISTINCT product_type ORDER BY product_type) AS microinverter_types,
+          SUM(CASE WHEN gen_class = 'old' THEN unit_count ELSE 0 END) AS old_gen_units,
+          SUM(CASE WHEN gen_class = 'new' THEN unit_count ELSE 0 END) AS new_gen_units,
           SUM(unit_count) AS total_units,
           MIN(quarter_first_interval) AS earliest_quarter,
           MAX(quarter_first_interval) AS latest_quarter
-        FROM fleet
-        WHERE product_type IS NOT NULL AND ${where}
+        FROM lotto_sites
         GROUP BY site_id
-        HAVING gen_count >= 2
       )
       SELECT
         site_id,
@@ -148,14 +157,15 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
         country,
         state,
         city,
-        gen_count AS generation_count,
-        ARRAY_TO_STRING(generations, ', ') AS generations,
+        ARRAY_TO_STRING(generation_families, ', ') AS generation_families,
         ARRAY_TO_STRING(microinverter_types, ', ') AS microinverter_types,
+        old_gen_units,
+        new_gen_units,
         total_units,
         earliest_quarter,
         latest_quarter
-      FROM site_gens
-      ORDER BY gen_count DESC, total_units DESC
+      FROM site_detail
+      ORDER BY total_units DESC
       LIMIT ${params.limit}
     `.trim()
 
@@ -168,46 +178,42 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
         sql,
         executionMs: Date.now() - started,
         rowCount: rows.length,
-        warning: rows.length === 0 ? 'No system expansion sites found.' : undefined,
+        warning: rows.length === 0 ? 'No Lotto sites found.' : undefined,
       },
     }
   }
 
   // mode === 'trend'
-  // Analyze expansion patterns: which old gen → new gen transitions, by region
+  // Which old-gen → new-gen transitions are most common, by region
   const sql = `
-    WITH site_gens AS (
-      SELECT
-        site_id,
-        MIN(tss_region) AS tss_region,
-        MIN(country) AS country,
-        LIST(DISTINCT ${GEN_CASE_SQL} ORDER BY ${GEN_CASE_SQL}) AS generations,
-        LIST(DISTINCT product_type ORDER BY product_type) AS product_types,
-        SUM(unit_count) AS total_units,
-        COUNT(DISTINCT ${GEN_CASE_SQL}) AS gen_count
-      FROM fleet
-      WHERE product_type IS NOT NULL AND ${where}
-      GROUP BY site_id
-      HAVING gen_count >= 2
+    WITH ${cte},
+    old_gens AS (
+      SELECT DISTINCT site_id, gen_family AS old_family
+      FROM lotto_sites WHERE gen_class = 'old'
     ),
-    expansion_pairs AS (
+    new_gens AS (
+      SELECT DISTINCT site_id, gen_family AS new_family
+      FROM lotto_sites WHERE gen_class = 'new'
+    ),
+    transitions AS (
       SELECT
-        tss_region,
-        country,
-        generations[1] AS original_gen,
-        generations[ARRAY_LENGTH(generations)] AS newest_gen,
-        ARRAY_TO_STRING(product_types, ', ') AS product_types,
-        total_units
-      FROM site_gens
+        o.site_id,
+        o.old_family,
+        n.new_family,
+        MIN(ls.tss_region) AS tss_region,
+        MIN(ls.country) AS country
+      FROM old_gens o
+      JOIN new_gens n ON o.site_id = n.site_id
+      JOIN lotto_sites ls ON ls.site_id = o.site_id
+      GROUP BY o.site_id, o.old_family, n.new_family
     )
     SELECT
       COALESCE(tss_region, 'Unknown') AS tss_region,
-      original_gen || ' → ' || newest_gen AS expansion_path,
-      COUNT(*) AS site_count,
-      SUM(total_units) AS total_units,
+      old_family || ' → ' || new_family AS expansion_path,
+      COUNT(DISTINCT site_id) AS site_count,
       LIST(DISTINCT country ORDER BY country) AS countries
-    FROM expansion_pairs
-    GROUP BY tss_region, original_gen, newest_gen
+    FROM transitions
+    GROUP BY tss_region, old_family, new_family
     ORDER BY site_count DESC
     LIMIT ${params.limit}
   `.trim()
@@ -221,7 +227,7 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
       sql,
       executionMs: Date.now() - started,
       rowCount: rows.length,
-      warning: rows.length === 0 ? 'No expansion trends found.' : undefined,
+      warning: rows.length === 0 ? 'No Lotto expansion trends found.' : undefined,
     },
   }
 }
