@@ -134,6 +134,14 @@ const EXAMPLE_CATEGORIES = [
       'Top 10 sites with highest STC rating',
     ],
   },
+  {
+    label: 'System Expansion (Lotto)',
+    questions: [
+      'How many sites have been expanded globally',
+      'Show system expansion details',
+      'System expansion trend by region',
+    ],
+  },
 ]
 
 const TELEMETRY_EXAMPLE_CATEGORIES = [

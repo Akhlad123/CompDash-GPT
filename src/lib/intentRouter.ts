@@ -18,6 +18,7 @@ export const AnalysisRequestSchema = z.object({
     'site_analysis', 'microinverter_analysis',
     'nearby_sites',
     'fleet_search',
+    'system_expansion',
     'knowledge',
     'unanswerable',
   ]),
@@ -90,6 +91,7 @@ RULES:
 10. For product names: IQ9N, IQ8HC, IQ8P, IQ8H, IQ8M, IQ7A etc. are microinverter SKU families.
 11. For regions: NA=North America, EURO=Europe, BR=Brazil, ANZP=Australia/NZ, LATAM=Latin America, IN=India, EMKT=Emerging Market.
 12. Microinverter level analysis: if the user asks "by microinverter" or "by serial" → groupBy: ["serial_number"].
+13. System expansion (Project Lotto): if the question mentions "system expansion", "lotto", "expanded sites", "upgraded systems", "multi-generation", "sites with IQ7 and IQ8/IQ9", "how many sites have been expanded", or asks about sites that have multiple microinverter generations → use get_system_expansion. The tool detects sites where older generation microinverters (IQ6/IQ7) coexist with newer ones (IQ8/IQ9) under the same site_id. Use groupBy: ["summary"] for counts, ["details"] for site-level breakdown, ["trend"] for expansion pattern analysis. Default to summary.
 
 FEW-SHOT EXAMPLES:
 
@@ -218,6 +220,27 @@ A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswer
 
 Q: "What are the specs of IQ8HC?"
 A: {"intent":"knowledge","tool":"knowledge_answer","confidence":"high","unanswerable":false}
+
+Q: "How many sites have been expanded globally?"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["summary"],"visualization":"table","confidence":"high"}
+
+Q: "Show me system expansion details"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["details"],"visualization":"table","confidence":"high"}
+
+Q: "System expansion trend by region"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["trend"],"visualization":"bar","confidence":"high"}
+
+Q: "How many lotto sites in North America?"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["summary"],"filters":{"tssRegions":["NA"]},"visualization":"table","confidence":"high"}
+
+Q: "Show expanded sites in Europe with details"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["details"],"filters":{"tssRegions":["EURO"]},"visualization":"table","confidence":"high"}
+
+Q: "Which sites have IQ7 and IQ9 together?"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["details"],"visualization":"table","confidence":"high"}
+
+Q: "Project Lotto analysis"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["summary"],"visualization":"table","confidence":"high"}
 
 Q: "What will the revenue be next quarter?"
 A: {"intent":"unanswerable","tool":"","unanswerable":true,"confidence":"high","caveat":"Revenue and financial forecasts are not available in fleet or telemetry data."}

@@ -50,6 +50,10 @@ export {
   fleetSearchTool,
 } from './fleetSearchTool'
 
+export {
+  systemExpansionTool,
+} from './systemExpansionTool'
+
 import { FLEET_TOOLS } from './fleetTools'
 import { ENERGY_TOOLS } from './energyTools'
 import { TELEMETRY_TOOLS } from './telemetryTools'
@@ -58,6 +62,7 @@ import { analyzeSiteTool } from './siteAnalysisTool'
 import { analyzeMicroinverterTool } from './microinverterAnalysisTool'
 import { findNearbyTool } from './nearbyTool'
 import { fleetSearchTool } from './fleetSearchTool'
+import { systemExpansionTool } from './systemExpansionTool'
 import type { AnalyticsTool } from './types'
 
 // ─── Unified registry ─────────────────────────────────────────────────────────
@@ -72,6 +77,7 @@ export const ALL_TOOLS: AnalyticsTool<any, any>[] = [
   analyzeMicroinverterTool,
   findNearbyTool,
   fleetSearchTool,
+  systemExpansionTool,
 ]
 
 /** Look up a tool by name. Returns undefined if not registered. */

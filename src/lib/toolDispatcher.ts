@@ -325,6 +325,20 @@ function buildToolParams(request: AnalysisRequest): Record<string, unknown> {
       }
     }
 
+    // ── System Expansion / Lotto ───────────────────────────────────────────
+    case 'get_system_expansion': {
+      // LLM may signal mode via groupBy or we infer from context
+      const modeHint = (request.groupBy?.[0] ?? '').toLowerCase()
+      const mode = (['summary', 'details', 'trend'] as const).includes(modeHint as 'summary' | 'details' | 'trend')
+        ? modeHint as 'summary' | 'details' | 'trend'
+        : 'summary'
+      return {
+        mode,
+        filters: { ...fleetFilters, ...(countries ? { countries } : {}) },
+        limit:   request.limit ?? 50,
+      }
+    }
+
     default:
       return {}
   }
