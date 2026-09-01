@@ -1,13 +1,18 @@
 // System Expansion (Project Lotto) analytics tool.
-// Identifies sites where an OLDER generation (IQ6/IQ7) was expanded with
-// NEWER generation hardware (IQ8/IQ9) under the same site_id.
+// Identifies sites where an IQ7-series system was expanded with IQ8 or IQ9
+// hardware under the same site_id.
 //
 // DEFINITION: A site qualifies as "system expansion" / "Lotto" ONLY if it has:
-//   - At least one OLD-gen product (IQ6* or IQ7*), AND
-//   - At least one NEW-gen product (IQ8* or IQ9*)
+//   - At least one IQ7-series product (IQ7*), AND
+//   - At least one IQ8-series or IQ9-series product (IQ8* or IQ9*)
 //
-// Sites with only IQ8+IQ9 (no IQ6/IQ7) do NOT qualify.
+// Sites with only IQ8+IQ9 (no IQ7) do NOT qualify.
 // Sites with only IQ6+IQ7 (no IQ8/IQ9) do NOT qualify.
+// IQ6 is NOT considered as a qualifying old-gen for Lotto.
+//
+// IMPORTANT: The fleet table has multiple rows per (site_id, product_type)
+// across quarters. We deduplicate to one row per (site_id, product_type) first
+// using MAX(unit_count) to avoid inflated counts.
 
 import { z } from 'zod'
 import { query } from '@/lib/duckdb'
@@ -16,28 +21,42 @@ import type { AnalyticsTool, ToolResult } from './types'
 import { MAX_RESULT_ROWS } from './types'
 
 // ─── Lotto qualification CTE (reused by all modes) ─────────────────────────
-// Classifies each product_type row as old_gen or new_gen, then filters to
-// sites that have BOTH.
+// Step 1: Deduplicate fleet rows to one per (site_id, product_type).
+// Step 2: Classify as old (IQ7) or new (IQ8/IQ9).
+// Step 3: Keep only sites that have BOTH old AND new.
 
 function buildLottoCTE(whereClause: string): string {
   return `
+    deduped AS (
+      SELECT
+        site_id,
+        product_type,
+        MIN(tss_region) AS tss_region,
+        MIN(country) AS country,
+        MIN(state) AS state,
+        MIN(city) AS city,
+        MAX(unit_count) AS unit_count,
+        MIN(quarter_first_interval) AS earliest_quarter,
+        MAX(quarter_first_interval) AS latest_quarter
+      FROM fleet
+      WHERE product_type IS NOT NULL AND ${whereClause}
+      GROUP BY site_id, product_type
+    ),
     lotto_base AS (
       SELECT
         *,
         CASE
-          WHEN UPPER(product_type) LIKE 'IQ6%' OR UPPER(product_type) LIKE 'IQ7%' THEN 'old'
+          WHEN UPPER(product_type) LIKE 'IQ7%' THEN 'old'
           WHEN UPPER(product_type) LIKE 'IQ8%' OR UPPER(product_type) LIKE 'IQ9%' THEN 'new'
           ELSE NULL
         END AS gen_class,
         CASE
-          WHEN UPPER(product_type) LIKE 'IQ6%' THEN 'IQ6'
           WHEN UPPER(product_type) LIKE 'IQ7%' THEN 'IQ7'
           WHEN UPPER(product_type) LIKE 'IQ8%' THEN 'IQ8'
           WHEN UPPER(product_type) LIKE 'IQ9%' THEN 'IQ9'
           ELSE 'Other'
         END AS gen_family
-      FROM fleet
-      WHERE product_type IS NOT NULL AND ${whereClause}
+      FROM deduped
     ),
     site_qualification AS (
       SELECT
@@ -125,8 +144,8 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
         executionMs: Date.now() - started,
         rowCount: rows.length,
         warning: totalExpanded === 0
-          ? 'No system expansion (Lotto) sites found. Lotto = sites with old gen (IQ6/IQ7) AND new gen (IQ8/IQ9).'
-          : `${totalExpanded} Lotto sites out of ${totalSites} total (${totalSites > 0 ? ((totalExpanded / totalSites) * 100).toFixed(1) : 0}%). These sites originally had IQ6/IQ7 and were expanded with IQ8/IQ9. Would you like to see site-level details?`,
+          ? 'No system expansion (Lotto) sites found. Lotto = sites with IQ7 AND IQ8/IQ9 under the same site ID.'
+          : `${totalExpanded} Lotto sites out of ${totalSites} total (${totalSites > 0 ? ((totalExpanded / totalSites) * 100).toFixed(1) : 0}%). These sites originally had IQ7-series microinverters and were expanded with IQ8/IQ9. Would you like to see site-level details?`,
       },
     }
   }
@@ -237,8 +256,8 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
 export const systemExpansionTool: AnalyticsTool<SystemExpansionParams> = {
   name: 'get_system_expansion',
   description:
-    'Analyze system expansion (Project Lotto) sites — sites where an older microinverter generation (IQ6/IQ7) ' +
-    'was upgraded or expanded with a newer generation (IQ8/IQ9). ' +
+    'Analyze system expansion (Project Lotto) sites — sites where an IQ7-series system ' +
+    'was expanded with IQ8 or IQ9 microinverters on the same site ID. ' +
     'Three modes: "summary" returns regional counts of expanded sites, ' +
     '"details" returns site-level breakdown with microinverter types and unit counts, ' +
     '"trend" analyzes expansion patterns (which generation transitions are most common, by region). ' +
