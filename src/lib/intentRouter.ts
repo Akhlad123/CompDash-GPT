@@ -27,7 +27,7 @@ export const AnalysisRequestSchema = z.object({
   filters: z.record(z.string(), z.unknown()).optional(),
   groupBy: z.array(z.string()).optional(),
   timeRange: z.object({ from: z.string(), to: z.string() }).optional(),
-  limit: z.number().int().min(1).max(2000).optional(),
+  limit: z.number().int().min(1).max(10000).optional(),
   aggregation: z.enum(['avg', 'sum', 'min', 'max', 'count', 'p50', 'p90', 'p95']).optional(),
   visualization: z.enum(['bar', 'line', 'scatter', 'histogram', 'table', 'kpi', 'heatmap', 'box']).optional(),
   products: z.array(z.string()).optional(),
@@ -92,6 +92,11 @@ RULES:
 11. For regions: NA=North America, EURO=Europe, BR=Brazil, ANZP=Australia/NZ, LATAM=Latin America, IN=India, EMKT=Emerging Market.
 12. Microinverter level analysis: if the user asks "by microinverter" or "by serial" → groupBy: ["serial_number"].
 13. System expansion (Project Lotto): if the question mentions "system expansion", "lotto", "expanded sites", "upgraded systems", "multi-generation", "sites with IQ7 and IQ8/IQ9", "how many sites have been expanded", "density", "hotspot", "which products added" → use get_system_expansion. The tool detects sites where IQ7-series microinverters coexist with IQ8/IQ9 under the same site_id. Use groupBy: ["summary"] for counts, ["details"] for site-level breakdown with site IDs, ["trend"] for expansion path analysis (IQ7→IQ8 vs IQ7→IQ9), ["density"] for geographic hotspots (states/cities with highest concentration — use for "highest density", "which region has most expansion", "where is expansion concentrated"), ["top_products"] for which IQ8/IQ9 SKUs are most commonly added. Default to summary.
+14. Limit / row count extraction: ALWAYS set the "limit" field based on the user's request:
+    - If the user says "all", "show all", "every", "everything", "complete list" → set limit: 10000.
+    - If the user specifies a number like "top 10", "give me 100 sites", "show 50", "20 sites" → set limit to that number.
+    - If the user says "show sites", "list expanded sites", "show me details" WITHOUT specifying a number or "all" → default to 50 (let the tool decide).
+    - NEVER omit limit when the user explicitly asks for all or a specific count.
 
 FEW-SHOT EXAMPLES:
 
@@ -253,6 +258,18 @@ A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["top_pr
 
 Q: "Top expansion products in Europe"
 A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["top_products"],"filters":{"tssRegions":["EURO"]},"visualization":"table","confidence":"high"}
+
+Q: "Show all the sites that have been expanded in US"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["details"],"filters":{"countries":["United States"]},"limit":10000,"visualization":"table","confidence":"high"}
+
+Q: "Show me 100 expanded sites in North America"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["details"],"filters":{"tssRegions":["NA"]},"limit":100,"visualization":"table","confidence":"high"}
+
+Q: "Give me 10 Lotto sites in Europe"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["details"],"filters":{"tssRegions":["EURO"]},"limit":10,"visualization":"table","confidence":"high"}
+
+Q: "List every expanded site globally"
+A: {"intent":"system_expansion","tool":"get_system_expansion","groupBy":["details"],"limit":10000,"visualization":"table","confidence":"high"}
 
 Q: "What will the revenue be next quarter?"
 A: {"intent":"unanswerable","tool":"","unanswerable":true,"confidence":"high","caveat":"Revenue and financial forecasts are not available in fleet or telemetry data."}

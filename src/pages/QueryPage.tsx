@@ -197,11 +197,13 @@ function safeCell(n: unknown, col: string): string {
 /** Extract desired row limit from natural language. */
 export function extractLimit(question: string, def = 20): number {
   const lower = question.toLowerCase()
-  if (/\ball\b|no\s*limit|everything/.test(lower)) return 1000
-  const m = lower.match(/\b(?:top|show|give|limit|fetch|return|get)\s+(\d+)\b/)
-    ?? lower.match(/\b(\d+)\s*(?:rows?|results?|records?|entries)\b/)
+  // "all", "every", "everything", "complete list", "no limit", "all the sites", "all expanded"
+  if (/\b(?:all|every|everything|complete\s+list|no\s*limit)\b/.test(lower)) return 10000
+  // "show 100", "top 50", "give me 10 sites", "limit 200"
+  const m = lower.match(/\b(?:top|show|give|limit|fetch|return|get|list)\s+(\d+)\b/)
+    ?? lower.match(/\b(\d+)\s*(?:rows?|results?|records?|entries|sites?)\b/)
     ?? lower.match(/\b(?:first|last)\s+(\d+)\b/)
-  if (m) return Math.min(parseInt(m[1], 10), 1000)
+  if (m) return Math.min(parseInt(m[1], 10), 10000)
   return def
 }
 
@@ -540,6 +542,11 @@ For solar terms: explain what it is, why it matters, and its impact on system pe
           setResult({ sql: '', confidence: 'low', explanation: '', matchedEntities: {} })
           return
         }
+
+        // Safety net: override limit from the user's original question text
+        // "show all" / "everything" → 10000; "show 100 sites" → 100; no match → keep LLM's limit
+        const userLimit = extractLimit(q, 0)
+        if (userLimit > 0) request.limit = userLimit
 
         if (request.intent === 'site_analysis') setInsight('Running site analysis workflow (fleet → peers → telemetry → clipping → benchmarking)…')
         if (request.intent === 'microinverter_analysis') setInsight('Running microinverter analysis workflow (telemetry → AC power → voltage/frequency/temperature → clipping)…')
