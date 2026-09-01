@@ -165,8 +165,8 @@ async function executeSystemExpansion(params: SystemExpansionParams): Promise<To
           SUM(CASE WHEN gen_class = 'old' THEN unit_count ELSE 0 END) AS old_gen_units,
           SUM(CASE WHEN gen_class = 'new' THEN unit_count ELSE 0 END) AS new_gen_units,
           SUM(unit_count) AS total_units,
-          MIN(quarter_first_interval) AS earliest_quarter,
-          MAX(quarter_first_interval) AS latest_quarter
+          MIN(earliest_quarter) AS earliest_quarter,
+          MAX(latest_quarter) AS latest_quarter
         FROM lotto_sites
         GROUP BY site_id
       )
