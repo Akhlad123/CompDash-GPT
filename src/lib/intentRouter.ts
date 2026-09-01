@@ -666,6 +666,64 @@ function tryFastFleetSearch(question: string): AnalysisRequest | null {
   }
 }
 
+/** Fast regex pre-check for system expansion / Lotto queries — no LLM call needed. */
+function tryFastSystemExpansion(question: string): AnalysisRequest | null {
+  const q = question.trim()
+  const lower = q.toLowerCase()
+
+  // Must mention system expansion / lotto / expanded sites
+  if (!/\b(?:system\s*expansion|lotto|expanded\s*sites?|multi[- ]?generation|upgraded\s*systems?)\b/i.test(q)
+      && !/\biq7\b.*\b(?:iq8|iq9)\b/i.test(q)
+      && !/\b(?:iq8|iq9)\b.*\biq7\b/i.test(q)) {
+    return null
+  }
+
+  // Determine mode
+  let mode = 'summary'
+  if (/\b(?:detail|site\s*id|site\s*level|list\s*sites?|show\s*sites?|all\s*(?:the\s*)?sites?|every\s*site)\b/i.test(q)) mode = 'details'
+  else if (/\b(?:density|hotspot|concentrated|highest\s*(?:density|concentration))\b/i.test(q)) mode = 'density'
+  else if (/\b(?:trend|transition|path|pattern)\b/i.test(q)) mode = 'trend'
+  else if (/\b(?:top\s*product|which\s*product|sku|product\s*mix|commonly\s*added)\b/i.test(q)) mode = 'top_products'
+
+  // Extract filters
+  const filters: Record<string, unknown> = {}
+  const REGION_MAP: Record<string, string> = {
+    'north america': 'NA', 'na': 'NA', 'europe': 'EURO', 'euro': 'EURO',
+    'brazil': 'BR', 'br': 'BR', 'india': 'IN', 'anzp': 'ANZP',
+    'latam': 'LATAM', 'emkt': 'EMKT',
+  }
+  for (const [alias, code] of Object.entries(REGION_MAP)) {
+    if (new RegExp(`\\b${alias}\\b`, 'i').test(q)) { filters.tssRegions = [code]; break }
+  }
+  const COUNTRY_MAP: Record<string, string> = {
+    us: 'United States', usa: 'United States', 'united states': 'United States',
+    uk: 'United Kingdom', france: 'France', germany: 'Germany',
+    australia: 'Australia', india: 'India', canada: 'Canada',
+    italy: 'Italy', spain: 'Spain', japan: 'Japan', mexico: 'Mexico',
+  }
+  for (const [alias, canonical] of Object.entries(COUNTRY_MAP)) {
+    if (new RegExp(`\\b${alias}\\b`, 'i').test(q)) { filters.countries = [canonical]; break }
+  }
+
+  // Extract limit
+  let limit: number | undefined
+  if (/\b(?:all|every|everything|complete)\b/i.test(lower)) limit = 10000
+  const numMatch = lower.match(/\b(?:top|show|give|list|get)\s+(\d+)\b/)
+    ?? lower.match(/\b(\d+)\s*(?:sites?|rows?|results?)\b/)
+  if (numMatch) limit = Math.min(parseInt(numMatch[1], 10), 10000)
+
+  return {
+    intent: 'system_expansion',
+    tool: 'get_system_expansion',
+    groupBy: [mode],
+    filters,
+    ...(limit ? { limit } : {}),
+    visualization: 'table',
+    confidence: 'high',
+    unanswerable: false,
+  }
+}
+
 export async function detectIntent(
   question: string,
   provider: LLMProvider,
@@ -684,6 +742,10 @@ export async function detectIntent(
   // Fast path: skip LLM for obvious fleet search requests
   const fastFleet = tryFastFleetSearch(question)
   if (fastFleet) return fastFleet
+
+  // Fast path: system expansion / Lotto questions
+  const fastLotto = tryFastSystemExpansion(question)
+  if (fastLotto) return fastLotto
 
   const systemPrompt = buildSystemPrompt(contextTable)
 
@@ -735,9 +797,16 @@ export async function detectIntent(
     return await attemptDetection(contextPrefix + question)
   } catch (err) {
     // On LLM timeout or unavailability, fall back to heuristic fast paths before giving up
+    const errAny = err as Record<string, unknown> | undefined
+    const errCode = typeof errAny?.code === 'string' ? errAny.code : ''
+    const errMsg  = err instanceof Error ? err.message.toLowerCase() : ''
     const isLLMFailure = err instanceof Error &&
-      (err.message.includes('timed out') || err.message.includes('unavailable') ||
-       err.message.includes('timeout'))
+      (['timeout', 'unavailable', 'model_error'].includes(errCode) ||
+       errMsg.includes('timed out') || errMsg.includes('unavailable') ||
+       errMsg.includes('timeout') || errMsg.includes('unreachable') ||
+       errMsg.includes('failed to fetch') || errMsg.includes('network') ||
+       errMsg.includes('not configured') || errMsg.includes('api key') ||
+       errMsg.includes('http 4') || errMsg.includes('http 5'))
     if (isLLMFailure) {
       const fallbackFleet = tryFastFleetSearch(question)
       if (fallbackFleet) return fallbackFleet
