@@ -3,8 +3,10 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Loader2, Search, ChevronDown, ChevronRight, AlertTriangle, Sparkles,
   ExternalLink, MessageCircleQuestion, Clock, Info, HelpCircle, Database,
-  BarChart3,
+  BarChart3, Download, FileText, FileSpreadsheet, ChevronLeft, ChevronRightIcon,
 } from 'lucide-react'
+import jsPDF from 'jspdf'
+import * as XLSX from 'xlsx'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -214,6 +216,107 @@ function replaceLimitInSql(sql: string, newLimit: number): string {
     : `${sql} LIMIT ${newLimit}`
 }
 
+// ─── Export helpers ──────────────────────────────────────────────────────────
+
+function exportCsv(q: string, columns: string[], allRows: Record<string, unknown>[]) {
+  const header = columns.join(',')
+  const body = allRows.map((r) =>
+    columns.map((c) => {
+      const v = r[c]
+      if (v === null || v === undefined) return ''
+      const s = String(v)
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
+    }).join(',')
+  ).join('\n')
+  const csv = `Question: "${q}"\n\n${header}\n${body}`
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  downloadBlob(blob, 'query-export.csv')
+}
+
+function exportExcel(q: string, columns: string[], allRows: Record<string, unknown>[]) {
+  const wb = XLSX.utils.book_new()
+  const aoa: unknown[][] = [
+    [`Question: ${q}`],
+    [],
+    columns.map(prettyCol),
+    ...allRows.map((r) => columns.map((c) => r[c] ?? '')),
+  ]
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  XLSX.utils.book_append_sheet(wb, ws, 'Results')
+  XLSX.writeFile(wb, 'query-export.xlsx')
+}
+
+function exportPdf(q: string, columns: string[], allRows: Record<string, unknown>[]) {
+  const doc = new jsPDF({ orientation: columns.length > 6 ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const margin = 10
+  let y = 15
+
+  // Title / question
+  doc.setFontSize(12)
+  doc.setFont('helvetica', 'bold')
+  doc.text('Query Export', margin, y)
+  y += 7
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  const qLines = doc.splitTextToSize(`Q: ${q}`, pageW - 2 * margin)
+  doc.text(qLines, margin, y)
+  y += qLines.length * 4 + 4
+  doc.text(`Total rows: ${allRows.length}  |  Exported: ${new Date().toLocaleString()}`, margin, y)
+  y += 8
+
+  // Table
+  const colW = Math.min((pageW - 2 * margin) / columns.length, 40)
+  const fontSize = columns.length > 8 ? 5 : columns.length > 5 ? 6 : 7
+  doc.setFontSize(fontSize)
+
+  // Header
+  doc.setFont('helvetica', 'bold')
+  columns.forEach((c, i) => {
+    doc.text(prettyCol(c).substring(0, 18), margin + i * colW, y, { maxWidth: colW - 1 })
+  })
+  y += 4
+  doc.setDrawColor(180)
+  doc.line(margin, y, margin + columns.length * colW, y)
+  y += 2
+
+  // Rows
+  doc.setFont('helvetica', 'normal')
+  for (const row of allRows) {
+    if (y > doc.internal.pageSize.getHeight() - 15) {
+      doc.addPage()
+      y = 15
+      // Re-draw header on new page
+      doc.setFont('helvetica', 'bold')
+      columns.forEach((c, i) => {
+        doc.text(prettyCol(c).substring(0, 18), margin + i * colW, y, { maxWidth: colW - 1 })
+      })
+      y += 4
+      doc.line(margin, y, margin + columns.length * colW, y)
+      y += 2
+      doc.setFont('helvetica', 'normal')
+    }
+    columns.forEach((c, i) => {
+      const v = row[c]
+      const s = v === null || v === undefined ? '—' : String(v)
+      doc.text(s.substring(0, 20), margin + i * colW, y, { maxWidth: colW - 1 })
+    })
+    y += 3.5
+  }
+
+  doc.save('query-export.pdf')
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url) }, 100)
+}
+
 export default function QueryPage() {
   const { isLoading: fleetLoading, error: fleetError } = useEnsureFleetData()
   const isFleetLoaded = useFleetStore((s) => s.isFleetLoaded)
@@ -233,6 +336,10 @@ export default function QueryPage() {
   const [emptyResultExplanation, setEmptyResultExplanation] = useState<string | null>(null)
   const [showChart, setShowChart] = useState(false)
   const [isOfflineFallback, setIsOfflineFallback] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const ROWS_PER_PAGE = 50
+  // Reset pagination when results change
+  useEffect(() => { setCurrentPage(1) }, [rows])
   const [analysisRequest, setAnalysisRequest] = useState<AnalysisRequest | null>(null)
   const apiQuestion = useAskApiQuestion()
 
@@ -1055,45 +1162,105 @@ For solar terms: explain what it is, why it matters, and its impact on system pe
                 )}
 
                 {/* Table for multi-row or many-column results (skip for site analysis, nearby sites, and fleet search) */}
-                {!(analysisRequest?.intent === 'site_analysis') && !(analysisRequest?.intent === 'nearby_sites') && !(analysisRequest?.intent === 'fleet_search') && (rows.length > 1 || columns.length > 6) && (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          {columns.map((c) => (
-                            <TableHead key={c} className="whitespace-nowrap">{prettyCol(c)}</TableHead>
-                          ))}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {rows.map((row, i) => (
-                          <TableRow key={i}>
+                {!(analysisRequest?.intent === 'site_analysis') && !(analysisRequest?.intent === 'nearby_sites') && !(analysisRequest?.intent === 'fleet_search') && (rows.length > 1 || columns.length > 6) && (() => {
+                  const totalPages = Math.ceil(rows.length / ROWS_PER_PAGE)
+                  const startIdx = (currentPage - 1) * ROWS_PER_PAGE
+                  const pageRows = rows.slice(startIdx, startIdx + ROWS_PER_PAGE)
+                  return (
+                  <div className="space-y-2">
+                    {/* Export toolbar */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Export all {rows.length.toLocaleString()} rows:</span>
+                      <Button variant="outline" size="sm" className="gap-1.5 text-xs h-7" onClick={() => exportCsv(question, columns, rows)}>
+                        <Download className="h-3 w-3" /> CSV
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-1.5 text-xs h-7" onClick={() => exportExcel(question, columns, rows)}>
+                        <FileSpreadsheet className="h-3 w-3" /> Excel
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-1.5 text-xs h-7" onClick={() => exportPdf(question, columns, rows)}>
+                        <FileText className="h-3 w-3" /> PDF
+                      </Button>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
                             {columns.map((c) => (
-                              <TableCell key={c} className="whitespace-nowrap">
-                                {c === 'site_id' && row[c] != null ? (
-                                  <a
-                                    href={`https://enlighten.enphaseenergy.com/admin/sites/${encodeURIComponent(String(row[c]))}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
-                                  >
-                                    {String(row[c])}
-                                    <ExternalLink className="h-3 w-3 shrink-0" />
-                                  </a>
-                                ) : (
-                                  safeCell(row[c], c)
-                                )}
-                              </TableCell>
+                              <TableHead key={c} className="whitespace-nowrap">{prettyCol(c)}</TableHead>
                             ))}
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      {rows.length} row{rows.length > 1 ? 's' : ''} returned
-                    </p>
+                        </TableHeader>
+                        <TableBody>
+                          {pageRows.map((row, i) => (
+                            <TableRow key={startIdx + i}>
+                              {columns.map((c) => (
+                                <TableCell key={c} className="whitespace-nowrap">
+                                  {c === 'site_id' && row[c] != null ? (
+                                    <a
+                                      href={`https://enlighten.enphaseenergy.com/admin/sites/${encodeURIComponent(String(row[c]))}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+                                    >
+                                      {String(row[c])}
+                                      <ExternalLink className="h-3 w-3 shrink-0" />
+                                    </a>
+                                  ) : (
+                                    safeCell(row[c], c)
+                                  )}
+                                </TableCell>
+                              ))}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    {/* Pagination controls */}
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>
+                        Showing {startIdx + 1}–{Math.min(startIdx + ROWS_PER_PAGE, rows.length)} of {rows.length.toLocaleString()} rows
+                      </span>
+                      {totalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="outline" size="sm" className="h-7 w-7 p-0"
+                            disabled={currentPage <= 1}
+                            onClick={() => setCurrentPage(1)}
+                          >
+                            <span className="text-xs">1</span>
+                          </Button>
+                          <Button
+                            variant="outline" size="sm" className="h-7 w-7 p-0"
+                            disabled={currentPage <= 1}
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                          </Button>
+                          <span className="px-2 font-medium tabular-nums">
+                            Page {currentPage} / {totalPages}
+                          </span>
+                          <Button
+                            variant="outline" size="sm" className="h-7 w-7 p-0"
+                            disabled={currentPage >= totalPages}
+                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          >
+                            <ChevronRightIcon className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="outline" size="sm" className="h-7 w-7 p-0"
+                            disabled={currentPage >= totalPages}
+                            onClick={() => setCurrentPage(totalPages)}
+                          >
+                            <span className="text-xs">{totalPages}</span>
+                          </Button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
+                  )
+                })()}
 
                 {/* Chart suggestion for multi-row results */}
                 {rows.length > 1 && (() => {

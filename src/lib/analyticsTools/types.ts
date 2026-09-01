@@ -29,4 +29,4 @@ export interface AnalyticsTool<P, R = Record<string, unknown>> {
 }
 
 /** Hard cap on result rows returned to the UI layer */
-export const MAX_RESULT_ROWS = 2000
+export const MAX_RESULT_ROWS = 10000
